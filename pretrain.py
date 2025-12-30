@@ -16,7 +16,7 @@ import coolname
 import hydra
 import pydantic
 from omegaconf import DictConfig
-from adam_atan2 import AdamATan2
+# from adam_atan2 import AdamATan2  # Backend module missing, using AdamW instead
 
 from puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
@@ -143,7 +143,7 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
 
             world_size=world_size
         ),
-        AdamATan2(
+        torch.optim.AdamW(
             model.parameters(),
 
             lr=0,  # Needs to be set by scheduler
@@ -425,8 +425,16 @@ def launch(hydra_config: DictConfig):
 
         ############ Train Iter
         train_state.model.train()
+        # list of not solved cubes
         for set_name, batch, global_batch_size in train_loader:
+            # if list of not solved cubes is not emtpy
+            #   keep old ones, only fill up the batch (discard unused examples)
             metrics = train_batch(config, train_state, batch, global_batch_size, rank=RANK, world_size=WORLD_SIZE)
+            #if train_state.carry is not None:
+            #   halted = train_state.carry.halted   # boolean tensor on CUDA, shape (local_batch_size,)
+            #   print(halted.cpu().numpy().tolist())
+            # applay sequence to cubes if halted
+            # safe them to not solved cubes
 
             if RANK == 0 and metrics is not None:
                 wandb.log(metrics, step=train_state.step)
