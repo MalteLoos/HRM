@@ -36,6 +36,19 @@ def softmax_cross_entropy(logits, labels, ignore_index: int = -100):
     # Flatten logits
     return F.cross_entropy(logits.to(torch.float32).view(-1, logits.shape[-1]), labels.to(torch.long).view(-1), ignore_index=ignore_index, reduction="none").view(labels.shape)
 
+def cube_loss(logits, labels, ignore_index: int = -100):
+    # label contains the scrambled cube
+    # logits is the model output
+    # filter sequence for valid output
+    # (punish invalid tokens, except ignore_index?)
+    # apply the sequence to the scrambled cube
+    #   using magiccube https://pypi.org/project/magiccube/
+    # compute how many pieces are at correct position
+    # give a bonus if these picies are connected (so it should learn to first solve parts of the cube not put random pieces at correct position)
+    # (bonus if EOS is a local maximum?)
+    # (large bonus if cube is solved?)
+    return 0 # return overall loss
+
 
 class ACTLossHead(nn.Module):
     def __init__(self, model: nn.Module, loss_type: str):
