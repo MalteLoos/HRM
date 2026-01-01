@@ -55,6 +55,13 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     halt_exploration_prob: float
 
     forward_dtype: str = "bfloat16"
+    
+    puzzle_type: str = "default" # "default" or "rubiks_cube"
+    
+    # If rubiks_cube:
+    # token = 1 + piece_id * rubiks_max_orientations + orientation
+    rubiks_num_pieces: int = 26        # 8 corners + 12 edges + 6 centers for 3x3
+    rubiks_max_orientations: int = 3
 
 
 class HierarchicalReasoningModel_ACTV1Block(nn.Module):
@@ -119,6 +126,15 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             self.puzzle_emb = CastedSparseEmbedding(self.config.num_puzzle_identifiers, self.config.puzzle_emb_ndim,
                                                     batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype)
 
+        # Rubik's cube specific embeddings (piece, position, orientation)
+        if self.config.puzzle_type == "rubiks_cube":
+            self.rubiks_piece_emb = CastedEmbedding(self.config.rubiks_num_pieces, self.config.hidden_size, 
+                                                    init_std=embed_init_std, cast_to=self.forward_dtype)
+            self.rubiks_position_emb = CastedEmbedding(self.config.rubiks_num_pieces, self.config.hidden_size,
+                                                       init_std=embed_init_std, cast_to=self.forward_dtype)
+            self.rubiks_orientation_emb = CastedEmbedding(self.config.rubiks_max_orientations, self.config.hidden_size,
+                                                          init_std=embed_init_std, cast_to=self.forward_dtype)
+
         # LM Blocks
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
@@ -144,8 +160,30 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
-        # Token embedding
-        embedding = self.embed_tokens(input.to(torch.int32))
+        # Token embedding based on puzzle type
+        if self.config.puzzle_type == "rubiks_cube":
+            # Decode tokens: token = 1 + piece_id * max_orientations + orientation
+            # Position is implicit from sequence index
+            tokens = input.to(torch.int32) - 1  # Remove PAD offset
+            tokens = tokens.clamp(min=0)  # Handle PAD tokens (0 -> -1 -> 0)
+            
+            piece_ids = tokens // self.config.rubiks_max_orientations
+            orientations = tokens % self.config.rubiks_max_orientations
+            
+            # Position indices (0 to seq_len-1 for each position in sequence)
+            batch_size, seq_len = input.shape
+            positions = torch.arange(seq_len, device=input.device, dtype=torch.int32).unsqueeze(0).expand(batch_size, -1)
+            
+            # Apply separate embeddings
+            piece_emb = self.rubiks_piece_emb(piece_ids)
+            position_emb = self.rubiks_position_emb(positions)
+            orientation_emb = self.rubiks_orientation_emb(orientations)
+            
+            # Sum the embeddings (scale by 1/sqrt(3) to maintain variance)
+            embedding = 0.577350269 * (piece_emb + position_emb + orientation_emb)
+        else:
+            # Default: standard token embedding
+            embedding = self.embed_tokens(input.to(torch.int32))
 
         # Puzzle embeddings
         if self.config.puzzle_emb_ndim > 0:

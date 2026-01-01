@@ -39,7 +39,8 @@ def softmax_cross_entropy(logits, labels, ignore_index: int = -100):
 def cube_loss(logits, labels, ignore_index: int = -100):
     # label contains the scrambled cube
     # logits is the model output
-    # filter sequence for valid output
+    # filter sequence for valid output (take all tokens until the first pad)
+    # all tokens not in the sequence should be pad
     # (punish invalid tokens, except ignore_index?)
     # apply the sequence to the scrambled cube
     #   using magiccube https://pypi.org/project/magiccube/
