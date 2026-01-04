@@ -17,6 +17,7 @@ from argdantic import ArgParser
 import numpy as np
 from pydantic import BaseModel
 import magiccube
+from magiccube import PieceType, Color
 
 from common import PuzzleDatasetMetadata
 
@@ -31,28 +32,53 @@ class DataProcessConfig(BaseModel):
     test_size: int = 300
     validation_size: int = 300
 
-
-# I think there is something in magiccube already
-def get_piece_type(pos, N):
-    x, y, z = pos
-    on_face = sum([x == 0 or x == N-1, y == 0 or y == N-1, z == 0 or z == N-1])
-    return on_face  # 3=corner, 2=edge, 1=center
-
-
-# I think there is something in magiccube already
-def get_orientation_id(piece, piece_type):
-    colors = piece.get_piece_colors()
+def get_piece_id(pos_idx, piece, solved_pieces_dict, piece_id_map):
+    # find piece id by matching colors
+    piece_colors = piece.get_piece_colors_str(no_loc=True) # get colors sorted
     
-    if piece_type == 3:  # Corner - 3 orientations
+    piece_id = pos_idx  # Default
+    for solved_pos, solved_piece in solved_pieces_dict.items():
+        solved_colors = solved_piece.get_piece_colors_str(no_loc=True)
+        if piece_colors == solved_colors:
+            piece_id = piece_id_map[solved_pos]
+            break
+    return piece_id
+
+def get_orientation_id(piece, solved_pieces_dict, pos):
+    colors = piece.get_piece_colors()
+    piece_type = piece.get_piece_type()
+    # reference color W/Y (G/B)
+    
+    if piece_type == PieceType.CORNER:  # Corner - 3 orientations
         for i, c in enumerate(colors):
-            if c is not None:
-                return i % 3
-        return 0
-    elif piece_type == 2:  # Edge - 2 orientations
+            if c == Color.W or c == Color.Y:
+                if i == 1:
+                    return 0
+                else:
+                    # find solved piece
+                    solved_piece = piece
+                    piece_colors = piece.get_piece_colors_str(no_loc=True)
+                    for solved_piece in solved_pieces_dict.values():
+                        solved_colors = solved_piece.get_piece_colors_str(no_loc=True)
+                        if piece_colors == solved_colors:
+                            solved_piece = solved_piece
+                            break
+
+                    # get face of reference color
+                    face = pos[i]
+                    if c == Color.W:
+                        return 1 if face == 0 else 2
+                    else:
+                        return 2 if face == 0 else 1
+        return 0 # this should never happen, each corner has white or yellow
+    elif piece_type == PieceType.EDGE:  # Edge - 2 orientations
         for i, c in enumerate(colors):
-            if c is not None:
-                return i % 2
-        return 0
+            if c == Color.W or c == Color.Y:   # if refenrence color is on reference axis orientation is 0 else 1
+                return 0 if i == 1 else 1
+        for i, c in enumerate(colors):
+            if c == Color.G or c == Color.B:
+                return 0 if i == 2 else 1
+        return 0 # this should never happen
     else:  # Center - 1 orientation
         return 0
 
@@ -63,24 +89,14 @@ def generate_cube(N, solved_pieces_dict, piece_id_map):
     n_moves = 10 * N # Apply 10 * N random moves to scramble
     scrambled.scramble(n_moves)
 
-    # maybe take somthing from magiccube
     def encode_cube_state(cube):
         pieces_dict = cube.get_all_pieces()
         encoded = []
         
         for pos_idx, (pos, piece) in enumerate(pieces_dict.items()):
-            # Find piece identity by matching colors
-            piece_colors = set(c for c in piece.get_piece_colors() if c is not None)
             
-            piece_id = pos_idx  # Default
-            for solved_pos, solved_piece in solved_pieces_dict.items():
-                solved_colors = set(c for c in solved_piece.get_piece_colors() if c is not None)
-                if piece_colors == solved_colors:
-                    piece_id = piece_id_map[solved_pos]
-                    break
-            
-            piece_type = get_piece_type(pos, N)
-            orientation = get_orientation_id(piece, piece_type)
+            piece_id = get_piece_id(pos_idx, piece, solved_pieces_dict, piece_id_map)
+            orientation = get_orientation_id(piece, solved_pieces_dict, pos)
             
             # Encode: token = 1 + piece_id * MAX_ORIENTATIONS + orientation
             # +1 to reserve 0 for PAD
@@ -101,7 +117,7 @@ def create_dataset(set_name, size, config: DataProcessConfig):
     
     solved = magiccube.Cube(config.dim)
     solved_pieces_dict = solved.get_all_pieces()
-    piece_id_map = {pos: idx for idx, pos in enumerate(solved_pieces_dict.keys())}
+    piece_id_map = {pos: idx for idx, pos in enumerate(solved_pieces_dict.keys())} # give each piece a unique id
     num_pieces = len(solved_pieces_dict)
     
     # Generate cubes
