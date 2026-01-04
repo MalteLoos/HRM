@@ -196,7 +196,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             embedding = torch.cat((puzzle_embedding.view(-1, self.puzzle_emb_len, self.config.hidden_size), embedding), dim=-2)
 
         # Position embeddings
-        if self.config.pos_encodings == "learned":
+        if self.config.pos_encodings == "learned" and not self.config.puzzle_type == "rubiks_cube":
             # scale by 1/sqrt(2) to maintain forward variance
             embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight.to(self.forward_dtype))
 
