@@ -62,6 +62,7 @@ class PretrainConfig(pydantic.BaseModel):
     project_name: Optional[str] = None
     run_name: Optional[str] = None
     checkpoint_path: Optional[str] = None
+    resume_checkpoint: Optional[str] = None
 
     # Extras
     seed: int = 0
@@ -169,7 +170,45 @@ def cosine_schedule_with_warmup_lr_lambda(
     return base_lr * (min_ratio + max(0.0, (1 - min_ratio) * 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))))
 
 
+def load_train_state(checkpoint_path: str, config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, world_size: int) -> TrainState:
+    # Estimated total training steps
+    total_steps = int(config.epochs * train_metadata.total_groups * train_metadata.mean_puzzle_examples / config.global_batch_size)
+
+    # Model
+    model, optimizers, optimizer_lrs = create_model(config, train_metadata, world_size=world_size)
+
+    # Load model state
+    state_dict = torch.load(checkpoint_path, map_location="cuda")
+    model.load_state_dict(state_dict)
+
+    # Extract step from checkpoint filename
+    step = 0
+    try:
+        filename = os.path.basename(checkpoint_path)
+        if filename.startswith("step_"):
+            step = int(filename.split("_")[1])
+    except (ValueError, IndexError):
+        print(f"Warning: Could not extract step number from checkpoint filename: {checkpoint_path}")
+
+    return TrainState(
+        step=step,
+        total_steps=total_steps,
+
+        model=model,
+        optimizers=optimizers,
+        optimizer_lrs=optimizer_lrs,
+        carry=None
+    )
+
+
 def init_train_state(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, world_size: int):
+    # Load from checkpoint if specified
+    if config.resume_checkpoint is not None:
+        if not os.path.exists(config.resume_checkpoint):
+            raise FileNotFoundError(f"Resume checkpoint not found: {config.resume_checkpoint}")
+        return load_train_state(config.resume_checkpoint, config, train_metadata, world_size)
+
+    # Otherwise, initialize from scratch
     # Estimated total training steps
     total_steps = int(config.epochs * train_metadata.total_groups * train_metadata.mean_puzzle_examples / config.global_batch_size)
 
@@ -413,10 +452,10 @@ def launch(hydra_config: DictConfig):
     # Progress bar and logger
     progress_bar = None
     if RANK == 0:
-        progress_bar = tqdm.tqdm(total=train_state.total_steps)
+        progress_bar = tqdm.tqdm(total=train_state.total_steps, initial=train_state.step)
 
         wandb.init(project=config.project_name, name=config.run_name, config=config.model_dump(), settings=wandb.Settings(_disable_stats=True))  # type: ignore
-        wandb.log({"num_params": sum(x.numel() for x in train_state.model.parameters())}, step=0)
+        wandb.log({"num_params": sum(x.numel() for x in train_state.model.parameters())}, step=train_state.step)
         save_code_and_config(config)
 
     # Training Loop

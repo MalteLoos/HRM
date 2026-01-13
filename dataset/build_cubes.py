@@ -1,124 +1,77 @@
 # create dataset of rubics cubes
 # take param N for NxNxN cubes
 # do some random moves aprox. 10 ~ N using magiccube https://pypi.org/project/magiccube/
-# 'label' = solved cube
+# 'label' = solution sequence
 # 'input' = scrambled cube
-# metadata:
-#  define vocab: pad + input (pieces) + output (all moves)
+#  define vocab: pad + max(input (pieces) + output (all moves))
 #  ignorelable pad (0)
 #  sequence length
 #
 # Each token encodes piece_id, orientation
 # Position from sequence index
 
+
 import json
 import os
+import sys
 from argdantic import ArgParser
 import numpy as np
 from pydantic import BaseModel
-import magiccube
-from magiccube import PieceType, Color
+from tqdm import tqdm
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import py222
 
 from common import PuzzleDatasetMetadata
 
 cli = ArgParser()
 
 class DataProcessConfig(BaseModel):
-    output_dir: str = "data/cube-3-by-3"
+    output_dir: str = "data/cube-2-by-2"
 
-    dim: int = 3
     seed: int = 42
     train_size: int = 1000
     test_size: int = 300
     validation_size: int = 300
-
-def get_piece_id(pos_idx, piece, solved_pieces_dict, piece_id_map):
-    # find piece id by matching colors
-    piece_colors = piece.get_piece_colors_str(no_loc=True) # get colors sorted
     
-    piece_id = pos_idx  # Default
-    for solved_pos, solved_piece in solved_pieces_dict.items():
-        solved_colors = solved_piece.get_piece_colors_str(no_loc=True)
-        if piece_colors == solved_colors:
-            piece_id = piece_id_map[solved_pos]
-            break
-    return piece_id
+    min_scramble_moves: int = 5
+    max_scramble_moves: int = 20
 
-def get_orientation_id(piece, solved_pieces_dict, pos):
-    colors = piece.get_piece_colors()
-    piece_type = piece.get_piece_type()
-    # reference color W/Y (G/B)
+
+def scramble_cube(rng, min_moves, max_moves):
+    s = py222.initState()
+    n_moves = rng.integers(min_moves, max_moves + 1)
     
-    if piece_type == PieceType.CORNER:  # Corner - 3 orientations
-        for i, c in enumerate(colors):
-            if c == Color.W or c == Color.Y:
-                if i == 1:
-                    return 0
-                else:
-                    # find solved piece
-                    solved_piece = piece
-                    piece_colors = piece.get_piece_colors_str(no_loc=True)
-                    for solved_piece in solved_pieces_dict.values():
-                        solved_colors = solved_piece.get_piece_colors_str(no_loc=True)
-                        if piece_colors == solved_colors:
-                            solved_piece = solved_piece
-                            break
-
-                    # get face of reference color
-                    face = pos[i]
-                    if c == Color.W:
-                        return 1 if face == 0 else 2
-                    else:
-                        return 2 if face == 0 else 1
-        return 0 # this should never happen, each corner has white or yellow
-    elif piece_type == PieceType.EDGE:  # Edge - 2 orientations
-        for i, c in enumerate(colors):
-            if c == Color.W or c == Color.Y:   # if refenrence color is on reference axis orientation is 0 else 1
-                return 0 if i == 1 else 1
-        for i, c in enumerate(colors):
-            if c == Color.G or c == Color.B:
-                return 0 if i == 2 else 1
-        return 0 # this should never happen
-    else:  # Center - 1 orientation
-        return 0
-
-MAX_ORIENTATIONS = 3
-def generate_cube(N, solved_pieces_dict, piece_id_map):
-    scrambled = magiccube.Cube(N)
-
-    n_moves = 10 * N # Apply 10 * N random moves to scramble
-    scrambled.scramble(n_moves)
-
-    def encode_cube_state(cube):
-        pieces_dict = cube.get_all_pieces()
-        encoded = []
-        
-        for pos_idx, (pos, piece) in enumerate(pieces_dict.items()):
-            
-            piece_id = get_piece_id(pos_idx, piece, solved_pieces_dict, piece_id_map)
-            orientation = get_orientation_id(piece, solved_pieces_dict, pos)
-            
-            # Encode: token = 1 + piece_id * MAX_ORIENTATIONS + orientation
-            # +1 to reserve 0 for PAD
-            token = 1 + piece_id * MAX_ORIENTATIONS + orientation
-            encoded.append(token)
-        
-        return np.array(encoded, dtype=np.int32)
+    last_move_face = -1  # avoid moving twice the same side
+    for _ in range(n_moves):
+        while True:
+            move = rng.integers(0, 9)  # we only need U R F since for the 2x2 F is the same as B'
+            move_face = move // 3  # 0=U, 1=R, 2=F
+            if move_face != last_move_face:
+                break
+        s = py222.doMove(s, move)
+        last_move_face = move_face
     
-    # For solved state, piece at position i has piece_id=i, orientation=0
-    solved_encoded = np.array([1 + i * MAX_ORIENTATIONS + 0 for i in range(len(solved_pieces_dict))], dtype=np.int32)
-    scrambled_encoded = encode_cube_state(scrambled)
-    
-    return scrambled_encoded, solved_encoded
+    return s
+
+
+def generate_sample(rng, min_scramble, max_scramble):
+    scrambled = scramble_cube(rng, min_scramble, max_scramble)
+    solution = py222.solve(scrambled)
+    return scrambled, solution
 
 
 def create_dataset(set_name, size, config: DataProcessConfig):
-    np.random.seed(config.seed if set_name == "train" else config.seed + hash(set_name) % 1000) # train, test, val should not have same seed
+    # train, test, val should not have same seed
+    if set_name == "train":
+        seed = config.seed
+    elif set_name == "test":
+        seed = config.seed + 1000
+    else:  # val
+        seed = config.seed + 2000
     
-    solved = magiccube.Cube(config.dim)
-    solved_pieces_dict = solved.get_all_pieces()
-    piece_id_map = {pos: idx for idx, pos in enumerate(solved_pieces_dict.keys())} # give each piece a unique id
-    num_pieces = len(solved_pieces_dict)
+    rng = np.random.default_rng(seed)
+    
+    seq_length = 24  # state string has 24 chars, larger than max moves 11
     
     # Generate cubes
     results = {
@@ -132,11 +85,21 @@ def create_dataset(set_name, size, config: DataProcessConfig):
     puzzle_id = 0
     example_id = 0
     
-    for _ in range(size):
-        scrambled, solved_state = generate_cube(config.dim, solved_pieces_dict, piece_id_map)
+    for _ in tqdm(range(size)):
+        scrambled, solution = generate_sample(
+            rng, 
+            config.min_scramble_moves, 
+            config.max_scramble_moves
+        )
         
-        results["inputs"].append(scrambled)
-        results["labels"].append(solved_state)
+        input = scrambled + 1  # add padding
+
+        label = np.zeros(seq_length, dtype=np.int32) # pad labels to seq length
+        for i, move in enumerate(solution):
+            label[i] = move + 1  # add padding
+        
+        results["inputs"].append(input.astype(np.int32))
+        results["labels"].append(label)
         
         example_id += 1
         puzzle_id += 1
@@ -157,11 +120,13 @@ def create_dataset(set_name, size, config: DataProcessConfig):
     }
 
     # Metadata
-    num_pieces = (np.pow(config.dim, 3) - np.pow(config.dim-2, 3))
-    num_moves = config.dim * 3 * 3
+    # vocab_size:
+    #   input: 6 colors
+    #   output: 2x2 cube has only 9 moves: U, U', U2, R, R', R2, F, F', F2
+    num_moves = 9
     metadata = PuzzleDatasetMetadata(
-        seq_len=num_pieces,
-        vocab_size=num_moves + 1,  # pad + only moves (not pieces), since the input is handled differently
+        seq_len=seq_length,  # must match input length (24)
+        vocab_size=num_moves + 1,  # equals the larger vocab + 1 for pad
         pad_id=0,
         ignore_label_id=0,
         
@@ -194,7 +159,6 @@ def preprocess_data(config: DataProcessConfig):
     create_dataset("train", config.train_size, config)
     create_dataset("test", config.test_size, config)
     create_dataset("val", config.validation_size, config)
-
 
 if __name__ == "__main__":
     cli()
