@@ -1,0 +1,7 @@
+python dataset/build_cubes.py --train-size 1000000 --test-size 1000 --validation-size 1000
+$env:DISABLE_COMPILE="1"; python pretrain.py --config-name cfg_cube_2x2
+
+
+python dataset/build_cubes_3x3.py --train-size 1000 --test-size 300 --validation-size 300
+$env:DISABLE_COMPILE="1"; python pretrain.py --config-name cfg_cube_3x3
+

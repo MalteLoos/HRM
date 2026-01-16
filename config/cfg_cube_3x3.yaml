@@ -8,13 +8,13 @@ hydra:
   output_subdir: null
 
 # Data path
-data_path: data/cube-2-by-2
+data_path: data/cube-3-by-3
 
 # Hyperparams - Training
-global_batch_size: 384
+global_batch_size: 256
 
-epochs: 20000
-eval_interval: 2000
+epochs: 10000
+eval_interval: 1000
 checkpoint_every_eval: True
 
 lr: 1e-4
