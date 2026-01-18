@@ -3,9 +3,62 @@ from typing import Any, Tuple, Dict, Sequence, Optional
 import torch
 import torch.nn.functional as F
 from torch import nn
+import numpy as np
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import py222
 
 
 IGNORE_LABEL_ID = -100
+
+
+def validate_cube_2x2_solution(inputs: torch.Tensor, predictions: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """
+    Validates if the predicted moves solve the 2x2 cube.
+    
+    Args:
+        inputs: Tensor of shape (B, 24) containing the scrambled cube state (+1 for padding offset)
+        predictions: Tensor of shape (B, SeqLen) containing predicted move indices (+1 for padding offset)
+        mask: Tensor of shape (B, SeqLen) indicating valid positions
+    
+    Returns:
+        Tensor of shape (B,) indicating if each sequence is a valid solution
+    """
+    batch_size = inputs.shape[0]
+    results = torch.zeros(batch_size, dtype=torch.bool, device=inputs.device)
+    
+    # Convert to numpy for py222 operations
+    inputs_np = inputs.cpu().numpy()
+    predictions_np = predictions.cpu().numpy()
+    mask_np = mask.cpu().numpy()
+    
+    for b in range(batch_size):
+        # Reconstruct cube state (remove padding offset)
+        cube_state = inputs_np[b] - 1
+        cube_state = cube_state.astype(np.int_)
+        
+        # Get predicted moves (remove padding offset, only valid positions)
+        valid_moves = predictions_np[b][mask_np[b]]
+        moves = (valid_moves - 1).astype(np.int_)  # Remove padding offset
+        
+        # Apply moves to the cube state
+        try:
+            s = cube_state.copy()
+            for move in moves:
+                if move < 0 or move >= 9:  # Invalid move index
+                    break
+                s = py222.doMove(s, move)
+            
+            # Normalize and check if solved
+            s = py222.normFC(s)
+            results[b] = py222.isSolved(s)
+        except Exception:
+            # If anything goes wrong, mark as incorrect
+            results[b] = False
+    
+    return results
 
 
 def s(x, epsilon=1e-30):
@@ -62,8 +115,20 @@ class ACTLossHead(nn.Module):
             loss_counts = mask.sum(-1)
             loss_divisor = loss_counts.clamp_min(1).unsqueeze(-1)  # Avoid NaNs in division
 
-            is_correct = mask & (torch.argmax(outputs["logits"], dim=-1) == labels)
+            predictions = torch.argmax(outputs["logits"], dim=-1)
+            is_correct = mask & (predictions == labels)
             seq_is_correct = is_correct.sum(-1) == loss_counts
+            
+            # For 2x2 cube: if not matching labels, check if it's still a valid solution
+            # (since there can be multiple optimal solutions)
+            inputs = new_carry.current_data["inputs"]
+            if inputs.shape[-1] == 24:  # 2x2 cube has 24 stickers
+                not_exact_match = ~seq_is_correct
+                if not_exact_match.any():
+                    # Validate predicted solutions for samples that don't match labels exactly
+                    valid_solutions = validate_cube_2x2_solution(inputs, predictions, mask)
+                    # Update seq_is_correct: correct if matches labels OR is a valid solution
+                    seq_is_correct = seq_is_correct | valid_solutions
             
             # Metrics (halted)
             valid_metrics = new_carry.halted & (loss_counts > 0)
