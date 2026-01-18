@@ -1,0 +1,21 @@
+name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
+loss:
+  name: losses@ACTRegressionLossHead
+  loss_type: mse
+
+halt_exploration_prob: 0.1
+halt_max_steps: 16
+
+H_cycles: 4
+L_cycles: 4
+
+H_layers: 4
+L_layers: 4
+
+hidden_size: 256
+num_heads: 4  # min(2, hidden_size // 64)
+expansion: 4
+
+puzzle_emb_ndim: ${.hidden_size}
+
+pos_encodings: rope
