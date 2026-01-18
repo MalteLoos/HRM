@@ -22,6 +22,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import py222
 
 from common import PuzzleDatasetMetadata
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
+import threading
+import time
+import os
+import itertools
 
 cli = ArgParser()
 
@@ -60,6 +66,45 @@ def generate_sample(rng, min_scramble, max_scramble):
     return scrambled, solution
 
 
+# Module-level worker and initializer for ProcessPoolExecutor (must be picklable on Windows)
+def _process_worker(seed, min_scramble, max_scramble):
+    local_rng = np.random.default_rng(int(seed))
+    t0 = time.time()
+    scrambled, solution = generate_sample(local_rng, min_scramble, max_scramble)
+    t1 = time.time()
+    return scrambled, solution, t1 - t0, os.getpid()
+
+
+def _init_worker():
+    try:
+        import py222  # noqa: F401
+    except Exception:
+        pass
+
+
+# Module-level batched worker
+def _process_worker_batch(seed, min_scramble, max_scramble, batch, progress_queue=None):
+    local_rng = np.random.default_rng(int(seed))
+    items = []
+    start_t = time.time()
+    for _ in range(batch):
+        scrambled, solution = generate_sample(local_rng, min_scramble, max_scramble)
+        items.append((scrambled, solution, time.time()))
+        # report progress per sample
+        try:
+            if progress_queue is not None:
+                progress_queue.put(1)
+        except Exception:
+            pass
+    # convert sample_elapsed to durations relative to start of each sample
+    sample_times = []
+    prev = start_t
+    for (_, _, t) in items:
+        sample_times.append(t - prev)
+        prev = t
+    return [(s, sol, dt) for (s, sol, _), dt in zip(items, sample_times)], os.getpid()
+
+
 def create_dataset(set_name, size, config: DataProcessConfig):
     # train, test, val should not have same seed
     if set_name == "train":
@@ -85,31 +130,91 @@ def create_dataset(set_name, size, config: DataProcessConfig):
     puzzle_id = 0
     example_id = 0
     
-    for _ in tqdm(range(size)):
-        scrambled, solution = generate_sample(
-            rng, 
-            config.min_scramble_moves, 
-            config.max_scramble_moves
-        )
-        
-        input = scrambled + 1  # add padding
+    # Parallel sample generation
 
-        label = np.zeros(seq_length, dtype=np.int32) # pad labels to seq length
-        for i, move in enumerate(solution):
-            label[i] = move + 1  # add padding
-        
-        results["inputs"].append(input.astype(np.int32))
-        results["labels"].append(label)
-        
-        example_id += 1
-        puzzle_id += 1
+    # Prepare per-sample seeds to keep determinism
+    seeds = rng.integers(0, 2**32 - 1, size=size, dtype=np.uint64).tolist()
 
-        results["puzzle_indices"].append(example_id)
-        results["puzzle_identifiers"].append(0)
+    max_workers = os.cpu_count() or 1
 
-        # Push group
-        results["group_indices"].append(puzzle_id)
-    
+    # Choose batch size so each worker handles multiple samples, reducing churn.
+    batch_size = max(1, size // (max_workers * 4))
+    num_jobs = (size + batch_size - 1) // batch_size
+
+    # NOTE: using module-level _process_worker_batch
+
+    manager = multiprocessing.Manager()
+    progress_q = manager.Queue()
+
+    def _progress_reader(q, total):
+        pbar = tqdm(total=total, desc=f"Generating {set_name}")
+        while True:
+            msg = q.get()
+            if msg is None:
+                break
+            pbar.update(msg)
+        pbar.close()
+
+    reader_thread = threading.Thread(target=_progress_reader, args=(progress_q, size), daemon=True)
+    reader_thread.start()
+
+    with ProcessPoolExecutor(max_workers=max_workers, initializer=_init_worker) as exe:
+        # create seeds for jobs
+        job_seeds = [int(x) for x in rng.integers(0, 2**32 - 1, size=num_jobs, dtype=np.uint64).tolist()]
+        futures = [exe.submit(_process_worker_batch, seed, config.min_scramble_moves, config.max_scramble_moves, batch_size if i < num_jobs - 1 else (size - i * batch_size), progress_q) for i, seed in enumerate(job_seeds)]
+
+        elapsed_times = []
+        pid_counts = {}
+        pid_times = {}
+        completed = 0
+        for fut in tqdm(as_completed(futures), total=len(futures)):
+            batch_items, pid = fut.result()
+            pid_counts[pid] = pid_counts.get(pid, 0) + len(batch_items)
+            pid_times.setdefault(pid, []).extend([t for (_, _, t) in batch_items])
+
+            for scrambled, solution, elapsed in batch_items:
+                if scrambled is None:
+                    continue
+                elapsed_times.append(elapsed)
+
+                inp = scrambled + 1  # add padding
+
+                label = np.zeros(seq_length, dtype=np.int32)  # pad labels to seq length
+                for i, move in enumerate(solution):
+                    if i >= seq_length:
+                        break
+                    label[i] = move + 1  # add padding
+
+                results["inputs"].append(inp.astype(np.int32))
+                results["labels"].append(label)
+
+                example_id += 1
+                puzzle_id += 1
+
+                results["puzzle_indices"].append(example_id)
+                results["puzzle_identifiers"].append(0)
+
+                # Push group
+                results["group_indices"].append(puzzle_id)
+
+                completed += 1
+                if completed >= size:
+                    break
+
+        # optional diagnostics
+        if elapsed_times:
+            avg = sum(elapsed_times) / len(elapsed_times)
+            print(f"Per-sample solve time: avg={avg:.3f}s min={min(elapsed_times):.3f}s max={max(elapsed_times):.3f}s")
+            print("Per-process sample counts (pid:count):")
+            for pid, cnt in sorted(pid_counts.items(), key=lambda x: -x[1])[:10]:
+                times = pid_times.get(pid, [])
+                print(f"  {pid}:{cnt} avg={sum(times)/len(times):.3f}s")
+        # stop reader thread
+        try:
+            progress_q.put(None)
+        except Exception:
+            pass
+        reader_thread.join()
     # Convert to numpy arrays
     final_results = {
         "inputs": np.stack(results["inputs"]),

@@ -24,8 +24,8 @@ class DataProcessConfig(BaseModel):
     source_repo: str = "data/cube-2-by-2"
     output_dir: str = "data/cube-2-by-2-heuristic"
 
-    train_size: int = 10000
-    test_size: int = 500
+    train_size: int = 1000000
+    test_size: int = 1000
 
 def load_dataset_split(data_dir: Path, split: str):
     """Load a dataset split (train/test/val)"""
@@ -92,7 +92,7 @@ def process(data, size):
         inputs = data["inputs"][j]
         labels = data["labels"][j]
         moves = [int(m) - 1 for m in labels if m != 0]
-        if len(moves) < 9:
+        if len(moves) < 8:
             continue
     
         count += 1
@@ -162,10 +162,10 @@ def create_dataset(set_name, config: DataProcessConfig):
     )
 
     # Save metadata as JSON.
-    save_dir = os.path.join(config.output_dir, set_name)
-    os.makedirs(save_dir, exist_ok=True)
+    save_dir = Path(config.output_dir).resolve() / set_name
+    save_dir.mkdir(parents=True, exist_ok=True)
     
-    with open(os.path.join(save_dir, "dataset.json"), "w") as f:
+    with open(str(save_dir / "dataset.json"), "w") as f:
         json.dump(metadata.model_dump(), f)
         
     # Save data - convert to numpy arrays with proper shapes
@@ -177,10 +177,12 @@ def create_dataset(set_name, config: DataProcessConfig):
     results["group_indices"] = np.array(results["group_indices"])
     
     for k, v in results.items():
-        np.save(os.path.join(save_dir, f"all__{k}.npy"), v)
+        np.save(str(save_dir / f"all__{k}.npy"), v)
         
     # Save IDs mapping (for visualization only)
-    with open(os.path.join(config.output_dir, "identifiers.json"), "w") as f:
+    identifiers_path = Path(config.output_dir).resolve() / "identifiers.json"
+    identifiers_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(str(identifiers_path), "w") as f:
         json.dump(["<blank>"], f)
 
 

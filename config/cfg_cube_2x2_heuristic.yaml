@@ -9,15 +9,16 @@ hydra:
 
 # Data path
 data_path: data/cube-2-by-2-heuristic
+#resume_checkpoint: "checkpoints/Cube-2-by-2-heuristic ACT-torch/HierarchicalReasoningModel_ACTV1 russet-bird/step_7812"
 
 # Hyperparams - Training
-global_batch_size: 384
+global_batch_size: 64
 
 epochs: 100
-eval_interval: 10
+eval_interval: 1
 checkpoint_every_eval: True
 
-lr: 1e-5
+lr: 1e-8
 lr_min_ratio: 1.0
 lr_warmup_steps: 2000
 
