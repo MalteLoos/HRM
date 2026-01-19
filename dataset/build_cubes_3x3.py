@@ -27,15 +27,15 @@ cli = ArgParser()
 
 
 class DataProcessConfig(BaseModel):
-    output_dir: str = "data/cube-3-by-3"
+    output_dir: str = "data/cube-3-by-3-4"
 
     seed: int = 42
     train_size: int = 1000
     test_size: int = 300
     validation_size: int = 300
 
-    min_scramble_moves: int = 10
-    max_scramble_moves: int = 25
+    min_scramble_moves: int = 20
+    max_scramble_moves: int = 30
 
 
 # Face indices for the cube string (54 characters total)

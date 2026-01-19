@@ -263,6 +263,48 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
 
     ((1 / global_batch_size) * loss).backward()
 
+    # Compute gradient norm per model component (for logging)
+    def compute_grad_norm(params):
+        total = 0.0
+        for param in params:
+            if param.grad is not None:
+                total += param.grad.data.norm(2).item() ** 2
+        return total ** 0.5
+    
+    # Get inner model (unwrap compiled model -> loss head -> model -> inner)
+    inner_model = train_state.model
+    if hasattr(inner_model, '_orig_mod'):
+        inner_model = inner_model._orig_mod
+    if hasattr(inner_model, 'model'):
+        inner_model = inner_model.model
+    if hasattr(inner_model, 'inner'):
+        inner_model = inner_model.inner
+    
+    grad_norms = {}
+    grad_norms['total'] = compute_grad_norm(train_state.model.parameters())
+    
+    # Input embeddings - separate each component
+    if hasattr(inner_model, 'embed_tokens'):
+        grad_norms['embed_tokens'] = compute_grad_norm(inner_model.embed_tokens.parameters())
+    if hasattr(inner_model, 'puzzle_emb'):
+        grad_norms['puzzle_emb'] = compute_grad_norm(inner_model.puzzle_emb.parameters())
+    if hasattr(inner_model, 'embed_pos'):
+        grad_norms['embed_pos'] = compute_grad_norm(inner_model.embed_pos.parameters())
+    
+    # H-level reasoning
+    if hasattr(inner_model, 'H_level'):
+        grad_norms['H_level'] = compute_grad_norm(inner_model.H_level.parameters())
+    
+    # L-level reasoning
+    if hasattr(inner_model, 'L_level'):
+        grad_norms['L_level'] = compute_grad_norm(inner_model.L_level.parameters())
+    
+    # Output heads - separate each component
+    if hasattr(inner_model, 'lm_head'):
+        grad_norms['lm_head'] = compute_grad_norm(inner_model.lm_head.parameters())
+    if hasattr(inner_model, 'q_head'):
+        grad_norms['q_head'] = compute_grad_norm(inner_model.q_head.parameters())
+
     # Allreduce
     if world_size > 1:
         for param in train_state.model.parameters():
@@ -299,6 +341,8 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
             reduced_metrics = {f"train/{k}": v / (global_batch_size if k.endswith("loss") else count) for k, v in reduced_metrics.items()}
 
             reduced_metrics["train/lr"] = lr_this_step
+            for name, norm in grad_norms.items():
+                reduced_metrics[f"grad_norm/{name}"] = norm
             return reduced_metrics
 
 
