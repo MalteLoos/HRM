@@ -10,3 +10,9 @@ python dataset/build_cubes_3x3.py --train-size 100000 --test-size 1000 --validat
 $env:DISABLE_COMPILE="1"; python pretrain.py --config-name cfg_cube_3x3
 python dataset/build_3x3_heuristic.py
 $env:DISABLE_COMPILE="1"; python pretrain.py --config-name cfg_cube_3x3_heuristic
+
+
+python solver.py --checkpoint "checkpoints/2x2-heuristic-fc/20260119_214148/best_model.pt" --model_type smallnet --num_cubes 10 --scramble_moves 20 --max_nodes 100000 
+python solver.py --checkpoint checkpoints\2x2-heuristic-fc\20260119_222222\best_model.pt --model_type smallnet --num_cubes 10 --scramble_moves 20 --max_nodes 100000 
+python solver.py --checkpoint checkpoints\2x2-heuristic-fc\20260119_222859\best_model.pt --model_type smallnet --num_cubes 10 --scramble_moves 20 --max_nodes 100000 
+
