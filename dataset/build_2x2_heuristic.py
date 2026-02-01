@@ -1,30 +1,35 @@
 # Heuristic dataset builder for 2x2 cube with **uniform scramble depths**
 # Each example is a single scrambled state with label = optimal distance to solved.
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import json
 from argdantic import ArgParser
 import numpy as np
-from pathlib import Path
 from pydantic import BaseModel
 from tqdm import tqdm
 
 import py222
-from common import PuzzleDatasetMetadata
+from dataset.common import PuzzleDatasetMetadata
 
 
 class DataProcessConfig(BaseModel):
     output_dir: str = "data/cube-2-by-2-heuristic"
 
-    train_size: int = 100000
+    train_size: int = 10000  # Unique cube states
     test_size: int = 1000
     val_size: int = 1000
+    
+    num_rotations: int = 24  # Data augmentation via rotations
 
     min_scramble_moves: int = 1
     max_scramble_moves: int = 11  # God's number for 2x2
 
 
 def sample_scramble(rng: np.random.Generator, min_moves: int, max_moves: int):
-    """Generate a random scramble with uniformly sampled depth and return (state, optimal_distance)."""
+    """Generate a random scramble and return (state, next_optimal_move)."""
 
     depth = int(rng.integers(min_moves, max_moves + 1))
 
@@ -45,10 +50,10 @@ def sample_scramble(rng: np.random.Generator, min_moves: int, max_moves: int):
     for mv in scramble:
         state = py222.doMove(state, mv)
 
-    # Compute optimal distance using solver (exact for 2x2)
+    # Compute optimal solution
     optimal_solution = py222.solve(state)
-    optimal_distance = len(optimal_solution)
-
+    optimal_distance = len(optimal_solution)  
+    
     return state, optimal_distance
 
 
@@ -66,15 +71,27 @@ def create_dataset(split: str, size: int, config: DataProcessConfig):
     example_id = 0
 
     for _ in tqdm(range(size), desc=f"Generating {split}"):
-        state, distance = sample_scramble(rng, config.min_scramble_moves, config.max_scramble_moves)
+        state, optimal_distance = sample_scramble(rng, config.min_scramble_moves, config.max_scramble_moves)
 
-        results["inputs"].append(state.astype(np.int32))
-        results["labels"].append(int(distance))
-        results["puzzle_identifiers"].append(0)
+        # Data augmentation: Generate rotations of this state
+        # Each rotation has same optimal_distance label
+        for rotation_idx in range(config.num_rotations):
+            rotated_state = state.copy()
+            
+            # Apply different rotation sequences for augmentation
+            for _ in range(rotation_idx % 3):
+                if rotation_idx % 3 == 1:
+                    rotated_state = py222.doMove(rotated_state, 3)  # R move rotates
+                elif rotation_idx % 3 == 2:
+                    rotated_state = py222.doMove(rotated_state, 6)  # F move rotates
+            
+            results["inputs"].append(rotated_state.astype(np.int32))
+            results["labels"].append(int(optimal_distance))
+            results["puzzle_identifiers"].append(0)
 
-        example_id += 1
-        results["puzzle_indices"].append(example_id)
-        results["group_indices"].append(example_id)
+            example_id += 1
+            results["puzzle_indices"].append(example_id)
+            results["group_indices"].append(example_id)
 
     # Metadata
     metadata = PuzzleDatasetMetadata(

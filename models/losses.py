@@ -105,6 +105,7 @@ class ACTRegressionLossHead(nn.Module):
     def __init__(self, model: nn.Module, loss_type: str = "mse"):
         super().__init__()
         self.model = model
+        self.loss_type = loss_type
         
     def initial_carry(self, *args, **kwargs):
         return self.model.initial_carry(*args, **kwargs)  # type: ignore
@@ -135,8 +136,11 @@ class ACTRegressionLossHead(nn.Module):
                 "steps": torch.where(new_carry.halted, new_carry.steps, 0).sum(),
             }
 
-        # MSE Loss
-        mse_loss = ((predictions - labels_float) ** 2).sum()
+        # Regression Loss (MSE or SmoothL1)
+        if self.loss_type == "smooth_l1":
+            regression_loss = F.smooth_l1_loss(predictions, labels_float, reduction="sum")
+        else:
+            regression_loss = ((predictions - labels_float) ** 2).sum()
         
         # Q halt: is prediction close to target?
         q_halt_loss = F.binary_cross_entropy_with_logits(
@@ -146,7 +150,7 @@ class ACTRegressionLossHead(nn.Module):
         )
 
         metrics.update({
-            "mse_loss": mse_loss.detach(),
+            "regression_loss": regression_loss.detach(),
             "q_halt_loss": q_halt_loss.detach(),
         })
 
@@ -163,4 +167,4 @@ class ACTRegressionLossHead(nn.Module):
         # Filter outputs for return
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
 
-        return new_carry, mse_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all()
+        return new_carry, regression_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all()

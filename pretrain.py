@@ -4,6 +4,15 @@ import os
 import math
 import yaml
 import shutil
+import sys
+
+# Auto-enable DISABLE_COMPILE if not already set (torch.compile causes issues)
+if "DISABLE_COMPILE" not in os.environ:
+    os.environ["DISABLE_COMPILE"] = "1"
+
+# Auto-set config if not provided via command line
+if "--config-name" not in sys.argv:
+    sys.argv.extend(["--config-name=cfg_cube_2x2_heuristic"])
 
 import torch
 import torch.distributed as dist
@@ -98,7 +107,7 @@ def create_dataloader(config: PretrainConfig, split: str, rank: int, world_size:
         batch_size=None,
 
         num_workers=1,
-        prefetch_factor=8,
+        prefetch_factor=16,
 
         pin_memory=True,
         persistent_workers=True
@@ -125,6 +134,10 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
     with torch.device("cuda"):
         model: nn.Module = model_cls(model_cfg)
         model = loss_head_cls(model, **config.arch.loss.__pydantic_extra__)  # type: ignore
+        
+        # Explicitly move model to CUDA
+        model = model.cuda()
+        
         if "DISABLE_COMPILE" not in os.environ:
             model = torch.compile(model, dynamic=False)  # type: ignore
 
@@ -206,6 +219,7 @@ def init_train_state(config: PretrainConfig, train_metadata: PuzzleDatasetMetada
     if config.resume_checkpoint is not None:
         if not os.path.exists(config.resume_checkpoint):
             raise FileNotFoundError(f"Resume checkpoint not found: {config.resume_checkpoint}")
+        print(f"[Resume] Loading checkpoint from: {config.resume_checkpoint}")
         return load_train_state(config.resume_checkpoint, config, train_metadata, world_size)
 
     # Otherwise, initialize from scratch
@@ -232,7 +246,13 @@ def save_train_state(config: PretrainConfig, train_state: TrainState):
         return
 
     os.makedirs(config.checkpoint_path, exist_ok=True)
-    torch.save(train_state.model.state_dict(), os.path.join(config.checkpoint_path, f"step_{train_state.step}"))
+    checkpoint_file = os.path.join(config.checkpoint_path, f"step_{train_state.step}")
+    torch.save(train_state.model.state_dict(), checkpoint_file)
+    if dist.is_initialized():
+        if dist.get_rank() == 0:
+            print(f"[Checkpoint] Saved: {checkpoint_file}")
+    else:
+        print(f"[Checkpoint] Saved: {checkpoint_file}")
 
 
 def compute_lr(base_lr: float, config: PretrainConfig, train_state: TrainState):
@@ -250,8 +270,8 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
     if train_state.step > train_state.total_steps:  # At most train_total_steps
         return
 
-    # To device
-    batch = {k: v.cuda() for k, v in batch.items()}
+    # To device with non_blocking for faster GPU transfer
+    batch = {k: v.cuda(non_blocking=True) for k, v in batch.items()}
 
     # Init carry if it is None
     if train_state.carry is None:
@@ -279,6 +299,13 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
             
         optim.step()
         optim.zero_grad()
+
+    # Debug: Log GPU memory and device placement on first step
+    if rank == 0 and train_state.step == 1:
+        print(f"GPU Memory used: {torch.cuda.memory_allocated() / 1e9:.2f}GB / 6GB")
+        print(f"Model device: {next(train_state.model.parameters()).device}")
+        print(f"Batch device: {batch['inputs'].device}")
+        print(f"Loss device: {loss.device}")
 
     # Reduce metrics
     if len(metrics):
@@ -452,11 +479,22 @@ def launch(hydra_config: DictConfig):
     # Progress bar and logger
     progress_bar = None
     if RANK == 0:
-        progress_bar = tqdm.tqdm(total=train_state.total_steps, initial=train_state.step)
+        progress_bar = tqdm.tqdm(
+            total=train_state.total_steps,
+            initial=train_state.step,
+            unit="it",
+            bar_format="{n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+        )
 
+        # Disable wandb for testing add: ,mode="disabled" 
         wandb.init(project=config.project_name, name=config.run_name, config=config.model_dump(), settings=wandb.Settings(_disable_stats=True))  # type: ignore
         wandb.log({"num_params": sum(x.numel() for x in train_state.model.parameters())}, step=train_state.step)
         save_code_and_config(config)
+        print(f"[Run] Project: {config.project_name}")
+        print(f"[Run] Name:    {config.run_name}")
+        print(f"[Run] Checkpoints will be saved to: {config.checkpoint_path}")
+        print(f"[Config] epochs={config.epochs}, lr={config.lr}, batch_size={config.global_batch_size}, eval_interval={config.eval_interval}")
+        print(f"[Training] Starting from step {train_state.step}/{train_state.total_steps}")
 
     # Training Loop
     for _iter_id in range(total_iters):
@@ -476,7 +514,15 @@ def launch(hydra_config: DictConfig):
             # safe them to not solved cubes
 
             if RANK == 0 and metrics is not None:
-                wandb.log(metrics, step=train_state.step)
+                # Log to terminal every 50 steps for quick tracking
+                if train_state.step % 50 == 0:
+                    tqdm.tqdm.write(f"[Step {train_state.step}] {metrics}")
+
+                # Log to wandb every 500 steps to reduce overhead
+                if train_state.step % 500 == 0:
+                    wandb.log(metrics, step=train_state.step)
+
+            if RANK == 0 and progress_bar is not None:
                 progress_bar.update(train_state.step - progress_bar.n)  # type: ignore
 
         ############ Evaluation
