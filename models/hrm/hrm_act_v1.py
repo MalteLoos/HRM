@@ -56,7 +56,6 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
 
     forward_dtype: str = "bfloat16"
 
-
 class HierarchicalReasoningModel_ACTV1Block(nn.Module):
     def __init__(self, config: HierarchicalReasoningModel_ACTV1Config) -> None:
         super().__init__()
@@ -110,7 +109,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         embed_init_std = 1.0 / self.embed_scale
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
+        self.lm_head      = CastedLinear(self.config.hidden_size, 1, bias=False) # only output heuristic
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
         self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size)  # ceil div
@@ -144,7 +143,6 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
-        # Token embedding
         embedding = self.embed_tokens(input.to(torch.int32))
 
         # Puzzle embeddings
@@ -205,7 +203,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         # LM Outputs
         new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
-        output = self.lm_head(z_H)[:, self.puzzle_emb_len:]
+        output = self.lm_head(z_H[:, 0])  # (B, 1)
 
         # Q head
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32)
