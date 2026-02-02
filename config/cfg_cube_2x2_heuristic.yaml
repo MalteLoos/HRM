@@ -17,8 +17,8 @@ resume_checkpoint: "checkpoints/Cube-2-by-2-heuristic ACT-torch/HierarchicalReas
 # Hyperparams - Training
 global_batch_size: 256
 
-epochs: 63
-eval_interval: 3
+epochs: 64
+eval_interval: 4
 checkpoint_every_eval: True
 
 lr: 5e-5
