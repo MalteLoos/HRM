@@ -137,15 +137,15 @@ def print_cube_state(state, title="Cube State", use_colors=True):
     
     # Middle row (L F R B)
     print(f" ┌──┬──┼──┼──┼──┬──┬──┬──┐")
-    print(f" │{get_sticker(16)}│{get_sticker(17)}│{get_sticker(8)} │{get_sticker(9)} │{get_sticker(4)} │{get_sticker(5)} │{get_sticker(20)}│{get_sticker(21)}│")
+    print(f" │{get_sticker(16)} │{get_sticker(17)} │{get_sticker(8)} │{get_sticker(9)} │{get_sticker(4)} │{get_sticker(5)} │{get_sticker(20)} │{get_sticker(21)} │")
     print(f" ├──┼──┼──┼──┼──┼──┼──┼──┤")
-    print(f" │{get_sticker(18)}│{get_sticker(19)}│{get_sticker(10)}│{get_sticker(11)}│{get_sticker(6)} │{get_sticker(7)} │{get_sticker(22)}│{get_sticker(23)}│")
+    print(f" │{get_sticker(18)} │{get_sticker(19)} │{get_sticker(10)} │{get_sticker(11)} │{get_sticker(6)} │{get_sticker(7)} │{get_sticker(22)} │{get_sticker(23)} │")
     print(f" └──┴──┼──┼──┼──┴──┴──┴──┘")
     
     # Bottom face (D)
-    print(f"       │{get_sticker(12)}│{get_sticker(13)}│")
+    print(f"       │{get_sticker(12)} │{get_sticker(13)} │")
     print(f"       ├──┼──┤")
-    print(f"       │{get_sticker(14)}│{get_sticker(15)}│")
+    print(f"       │{get_sticker(14)} │{get_sticker(15)} │")
     print(f"       └──┴──┘")
 
 
