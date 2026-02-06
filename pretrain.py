@@ -16,7 +16,7 @@ import coolname
 import hydra
 import pydantic
 from omegaconf import DictConfig
-from adam_atan2 import AdamATan2
+#from adam_atan2 import AdamATan2
 
 from puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
@@ -65,6 +65,7 @@ class PretrainConfig(pydantic.BaseModel):
 
     # Extras
     seed: int = 0
+    max_solution_len: Optional[int] = None  # Filter out groups with solutions longer than this
     checkpoint_every_eval: bool = False
     eval_interval: Optional[int] = None
     eval_save_outputs: List[str] = []
@@ -86,6 +87,7 @@ def create_dataloader(config: PretrainConfig, split: str, rank: int, world_size:
         seed=config.seed,
 
         dataset_path=config.data_path,
+        max_solution_len=config.max_solution_len,
 
         rank=rank,
         num_replicas=world_size,
@@ -143,7 +145,7 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
 
             world_size=world_size
         ),
-        AdamATan2(
+        torch.optim.AdamW(
             model.parameters(),
 
             lr=0,  # Needs to be set by scheduler
