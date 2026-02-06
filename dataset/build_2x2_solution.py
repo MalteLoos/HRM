@@ -39,9 +39,9 @@ class DataProcessConfig(BaseModel):
     output_dir: str = "data/cube-2-by-2-solution"
     
     seed: int = 42
-    train_size: int = 10000
-    test_size: int = 1000
-    val_size: int = 1000
+    train_size: int = 150000
+    test_size: int = 15000
+    val_size: int = 15000
     
     # Scramble depth range (God's number for 2x2 is 11)
     min_scramble_moves: int = 1
