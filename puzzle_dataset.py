@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Optional
 
 import numpy as np
 import pydantic
@@ -46,6 +47,8 @@ class PuzzleDatasetConfig(pydantic.BaseModel):
 
     epochs_per_iter: int  # Batch X epochs in an iteration to reduce overhead.
 
+    max_solution_len: Optional[int] = None  # Filter out groups with solutions longer than this
+
     rank: int
     num_replicas: int
 
@@ -91,6 +94,28 @@ class PuzzleDataset(IterableDataset):
                 field_name: np.load(os.path.join(self.config.dataset_path, self.split, f"{set_name}__{field_name}.npy"), mmap_mode=mmap_mode)
                 for field_name, mmap_mode in field_mmap_modes.items()
             }
+
+        # Filter groups by max solution length
+        if self.config.max_solution_len is not None:
+            for set_name, dataset in self._data.items():
+                group_indices = dataset["group_indices"]
+                puzzle_indices = dataset["puzzle_indices"]
+                labels = dataset["labels"]
+                num_groups = group_indices.size - 1
+
+                valid_groups = []
+                for gid in range(num_groups):
+                    first_puzzle = group_indices[gid]
+                    row_idx = puzzle_indices[first_puzzle]
+                    # Solution length = number of non-zero tokens in first solution
+                    first_solution = labels[row_idx, 0] if labels.ndim == 3 else labels[row_idx]
+                    sol_len = int(np.count_nonzero(first_solution))
+                    if sol_len <= self.config.max_solution_len:
+                        valid_groups.append(gid)
+
+                dataset["_valid_groups"] = np.array(valid_groups, dtype=np.int64)
+                print(f"[{self.split}/{set_name}] max_solution_len={self.config.max_solution_len}: "
+                      f"kept {len(valid_groups)}/{num_groups} groups")
 
     def _collate_batch(self, batch):
         # Convert dtype
@@ -153,10 +178,13 @@ class PuzzleDataset(IterableDataset):
             # Increase epoch count
             self._iters += 1
 
-            # Randomly shuffle groups
+            # Randomly shuffle groups (respecting max_solution_len filter)
             rng = np.random.Generator(np.random.Philox(seed=self.config.seed + self._iters))
 
-            group_order = np.concatenate([rng.permutation(dataset["group_indices"].size - 1) for _i in range(self.config.epochs_per_iter)])
+            if "_valid_groups" in dataset:
+                group_order = np.concatenate([rng.permutation(dataset["_valid_groups"]) for _i in range(self.config.epochs_per_iter)])
+            else:
+                group_order = np.concatenate([rng.permutation(dataset["group_indices"].size - 1) for _i in range(self.config.epochs_per_iter)])
             start_index = 0
             
             while start_index < group_order.size:

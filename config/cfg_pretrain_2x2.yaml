@@ -9,13 +9,13 @@ hydra:
 
 # Data path
 data_path: data/cube-2-by-2-all-solutions
-max_solution_len: 4  # null = no limit, e.g. 4 to train only on short scrambles first
+max_solution_len: null  # null = no limit, e.g. 4 to train only on short scrambles first
 
 # Hyperparams - Training
 global_batch_size: 256
 
-epochs: 100
-eval_interval: 10
+epochs: 400
+eval_interval: 40
 checkpoint_every_eval: True
 
 lr: 1e-4
