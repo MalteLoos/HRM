@@ -1,6 +1,7 @@
 from .py222 import (
     initState,
     doMove,
+    doMoves,
     doAlgStr,
     isSolved,
     normFC,
@@ -11,13 +12,18 @@ from .py222 import (
     indexP2,
     indexOP,
     printCube,
+    scramble,
+    moveInds,
+    moveDefs,
 )
 
 from .solver import (
     solveCube,
+    solve,
     IDAStar,
     genOTable,
     genPTable,
+    moveStrs,
 )
 
 __all__ = [
@@ -33,8 +39,14 @@ __all__ = [
     'indexP2',
     'indexOP',
     'printCube',
+    'scramble',
+    "doMoves",
+    'moveInds',
+    'moveDefs',
     'solveCube',
+    'solve',
     'IDAStar',
     'genOTable',
     'genPTable',
+    'moveStrs',
 ]
