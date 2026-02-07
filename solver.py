@@ -299,7 +299,7 @@ def astar_solve(
             
             # Pop multiple nodes to expand in batch
             nodes_to_expand = []
-            while open_set and len(nodes_to_expand) < batch_size // len(MOVES):
+            while open_set and len(nodes_to_expand) < max(1, batch_size // len(MOVES)):
                 node = heapq.heappop(open_set)
                 # Skip if we've found a better path to this state
                 if node.g_score <= visited.get(node.state_str, float('inf')):
