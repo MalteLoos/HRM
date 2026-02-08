@@ -183,7 +183,6 @@ def train_model(
 
 if __name__ == "__main__":
     MAX_SEQUENCE_LENGTH = 4
-    DATASET_SIZE = 75000  # Options: 15000, 30000, 50000, 75000, 100000
     
     print("Training MLP on short sequences only")
     print(f"Max sequence length: {MAX_SEQUENCE_LENGTH} moves")
@@ -193,7 +192,7 @@ if __name__ == "__main__":
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Device: {device}")
     
-    data_dir = Path(f"data/cube-2-by-2-solution-samples/n{DATASET_SIZE}")
+    data_dir = Path("data/cube-2-by-2")
     
     print("\nLoading dataset...")
     train_data = load_dataset_split(data_dir, "train", max_length=MAX_SEQUENCE_LENGTH)
