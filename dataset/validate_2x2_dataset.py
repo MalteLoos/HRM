@@ -23,7 +23,7 @@ cli = ArgParser()
 class ValidationConfig(BaseModel):
     dataset_dir: str = "data/cube-2-by-2-solution"
     num_samples_to_check: int = None  # None = check all samples
-    check_optimality: bool = True  # Verify solutions are optimal (slow)
+    check_optimality: bool = True  # Verify solutions are optimal
     verbose: bool = False
 
 

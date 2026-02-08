@@ -12,8 +12,6 @@ import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-PAD_PENALTY_WEIGHT = 3.0  # Penalty for wrong predictions at PAD positions
-
 
 class SimpleMLP(nn.Module):
     """4-layer MLP with one-hot encoding for sequence prediction."""
@@ -71,6 +69,35 @@ def load_dataset_split(data_dir: Path, split: str, max_length: int = None):
     return {'metadata': metadata, 'inputs': inputs, 'labels': labels}
 
 
+def eval_epoch(model, loader, criterion, device):
+    """Evaluate model on a loader in eval mode (no dropout)."""
+    model.eval()
+    total_loss = 0.0
+    token_correct = 0
+    token_total = 0
+    seq_correct = 0
+    count = 0
+    
+    with torch.no_grad():
+        for inputs, targets in loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            logits = model(inputs)
+            loss = criterion(logits.view(-1, logits.shape[-1]), targets.view(-1))
+            total_loss += loss.item() * inputs.size(0)
+            
+            preds = torch.argmax(logits, dim=-1)
+            mask = targets != 0
+            token_correct += (preds.eq(targets) & mask).sum().item()
+            token_total += mask.sum().item()
+            seq_correct += (preds.eq(targets) | ~mask).all(dim=1).sum().item()
+            count += inputs.size(0)
+    
+    avg_loss = total_loss / count
+    token_acc = token_correct / max(1, token_total)
+    seq_acc = seq_correct / count
+    return avg_loss, token_acc, seq_acc
+
+
 def train_model(
     model,
     train_data,
@@ -120,69 +147,18 @@ def train_model(
         epoch_start = time.time()
         # Train
         model.train()
-        train_loss = 0
-        train_token_correct = 0
-        train_token_total = 0
-        train_seq_correct = 0
-        train_count = 0
-        
         for inputs, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False):
             inputs, targets = inputs.to(device), targets.to(device)
             
             optimizer.zero_grad()
             logits = model(inputs)
-            seq_loss = criterion(logits.view(-1, logits.shape[-1]), targets.view(-1))
-            
-            # Add penalty for wrong predictions at PAD positions
-            preds = torch.argmax(logits, dim=-1)
-            pad_mask = (targets == 0)
-            if pad_mask.sum() > 0:
-                wrong_at_pad = (preds[pad_mask] != 0).float().mean()
-                loss = seq_loss + PAD_PENALTY_WEIGHT * wrong_at_pad
-            else:
-                loss = seq_loss
+            loss = criterion(logits.view(-1, logits.shape[-1]), targets.view(-1))
             loss.backward()
             optimizer.step()
-            
-            train_loss += loss.item() * inputs.size(0)
-            
-            with torch.no_grad():
-                preds = torch.argmax(logits, dim=-1)
-                mask = targets != 0
-                train_token_correct += (preds.eq(targets) & mask).sum().item()
-                train_token_total += mask.sum().item()
-                train_seq_correct += (preds.eq(targets) | ~mask).all(dim=1).sum().item()
-                train_count += inputs.size(0)
         
-        train_loss /= train_count
-        train_token_acc = train_token_correct / max(1, train_token_total)
-        train_seq_acc = train_seq_correct / train_count
-        
-        # Evaluate
-        model.eval()
-        test_loss = 0
-        test_token_correct = 0
-        test_token_total = 0
-        test_seq_correct = 0
-        test_count = 0
-        
-        with torch.no_grad():
-            for inputs, targets in test_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                logits = model(inputs)
-                loss = criterion(logits.view(-1, logits.shape[-1]), targets.view(-1))
-                test_loss += loss.item() * inputs.size(0)
-                
-                preds = torch.argmax(logits, dim=-1)
-                mask = targets != 0
-                test_token_correct += (preds.eq(targets) & mask).sum().item()
-                test_token_total += mask.sum().item()
-                test_seq_correct += (preds.eq(targets) | ~mask).all(dim=1).sum().item()
-                test_count += inputs.size(0)
-        
-        test_loss /= test_count
-        test_token_acc = test_token_correct / max(1, test_token_total)
-        test_seq_acc = test_seq_correct / test_count
+        # Evaluate on train and test sets in eval mode
+        train_loss, train_token_acc, train_seq_acc = eval_epoch(model, train_loader, criterion, device)
+        test_loss, test_token_acc, test_seq_acc = eval_epoch(model, test_loader, criterion, device)
         
         history['train_loss'].append(train_loss)
         history['test_loss'].append(test_loss)
@@ -207,6 +183,7 @@ def train_model(
 
 if __name__ == "__main__":
     MAX_SEQUENCE_LENGTH = 4
+    DATASET_SIZE = 75000  # Options: 15000, 30000, 50000, 75000, 100000
     
     print("Training MLP on short sequences only")
     print(f"Max sequence length: {MAX_SEQUENCE_LENGTH} moves")
@@ -216,7 +193,7 @@ if __name__ == "__main__":
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Device: {device}")
     
-    data_dir = Path("data/cube-2-by-2-solution")
+    data_dir = Path(f"data/cube-2-by-2-solution-samples/n{DATASET_SIZE}")
     
     print("\nLoading dataset...")
     train_data = load_dataset_split(data_dir, "train", max_length=MAX_SEQUENCE_LENGTH)
@@ -276,16 +253,6 @@ if __name__ == "__main__":
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     fig.savefig(output_file, dpi=150)
     plt.close(fig)
-
-    checkpoint_path = output_dir / "mlp_short_seq_len4_checkpoint.pt"
-    torch.save({
-        'epoch': len(history['train_loss']) - 1,
-        'model_state': model.state_dict(),
-        'history': history,
-        'pad_penalty_weight': PAD_PENALTY_WEIGHT,
-        'max_sequence_length': MAX_SEQUENCE_LENGTH,
-        'num_params': num_params
-    }, checkpoint_path)
     
     print("\n" + "-"*50)
     print("Training complete")
@@ -298,5 +265,3 @@ if __name__ == "__main__":
     print(f"Total Time: {total_time:.1f}s ({total_time/60:.1f} min)")
     print(f"Parameters: {num_params:,}")
     print(f"\nPlot saved: {output_file}")
-    print(f"Checkpoint saved: {checkpoint_path}")
-    print(f"\nCompare to full dataset (all lengths) to test hypothesis.")

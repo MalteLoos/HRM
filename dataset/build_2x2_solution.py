@@ -33,8 +33,8 @@ class DataProcessConfig(BaseModel):
     test_size: int = 15000
     val_size: int = 15000
     min_scramble_moves: int = 1
-    max_scramble_moves: int = 11  # God's number for 2x2
-    max_solution_length: int = 15  # For padding
+    max_scramble_moves: int = 20  
+    max_solution_length: int = 11 # max solution length in 2x2
     num_workers: int = None  # None = all CPUs
 
 
@@ -172,7 +172,7 @@ def create_dataset(split_name: str, size: int, config: DataProcessConfig):
                     if i >= config.max_solution_length:
                         print(f"Warning: Solution length {len(solution)} truncated")
                         break
-                    label[i] = move + 1  # Shift 0-8 to 1-9 (0=PAD)
+                    label[i] = move + 1  # Shift 0-8 to 1-9
                 
                 results["labels"].append(label)
                 

@@ -8,7 +8,6 @@ import sys
 import copy
 import random
 from pathlib import Path
-import magiccube
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from solver import SmallNetHeuristic, astar_solve, scramble_cube, is_solved
@@ -47,7 +46,7 @@ if __name__ == "__main__":
     while not found and attempt < MAX_ATTEMPTS:
         attempt += 1
         
-        # Longer scrambles (18-25) increase likelihood of harder states
+        # Longer scrambles (18-25) for harder states
         test_cube, scramble = scramble_cube(num_moves=random.randint(18, 25))
         
         print(f"[{attempt}/{MAX_ATTEMPTS}] Solving...", end="", flush=True)
