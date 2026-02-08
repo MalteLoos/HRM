@@ -20,16 +20,15 @@ from solver import SmallNetHeuristic, ZeroHeuristic, astar_solve, scramble_cube,
 
 
 class CubeVisualizer:
-    """Helper class to visualize 2x2x2 cube states."""
+    """Visualize 2x2x2 cube states."""
     
-    # Color mapping from magiccube: Y=Yellow, R=Red, G=Green, O=Orange, B=Blue, W=White
     COLOR_SYMBOLS = {
-        'W': "⬜",  # White - Top
-        'Y': "🟨",  # Yellow - Bottom
-        'O': "🟧",  # Orange - Left
-        'R': "🟥",  # Red - Right
-        'G': "🟩",  # Green - Front
-        'B': "🟦",  # Blue - Back
+        'W': "⬜",
+        'Y': "🟨",
+        'O': "🟧",
+        'R': "🟥",
+        'G': "🟩",
+        'B': "🟦",
     }
     
     @staticmethod
@@ -37,20 +36,8 @@ class CubeVisualizer:
         """Print cube state in unfolded format."""
         if title:
             print(f"\n{title}")
-            print("=" * 40)
         
         s = str(cube).replace(" ", "").replace("\n", "")
-        
-        # magiccube 2x2 str() is a row-based unfolded net:
-        #       s[0]  s[1]
-        #       s[2]  s[3]
-        # s[4]  s[5]  s[6]  s[7]  s[8]  s[9]  s[10] s[11]
-        # s[12] s[13] s[14] s[15] s[16] s[17] s[18] s[19]
-        #       s[20] s[21]
-        #       s[22] s[23]
-        #
-        # Faces: U=[0-3], L=[4,5,12,13], F=[6,7,14,15],
-        #        R=[8,9,16,17], B=[10,11,18,19], D=[20-23]
         
         c = CubeVisualizer.COLOR_SYMBOLS
         
@@ -86,95 +73,62 @@ class CubeVisualizer:
 
 
 if __name__ == "__main__":
-    print("="*70)
-    print("STEP-BY-STEP CUBE SOLUTION VISUALIZER")
-    print("="*70)
-    
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"\nDevice: {device}")
+    print(f"Device: {device}")
     
     # Settings
     SCRAMBLE_LENGTH = 20
     MAX_NODES = 100000
     
     # Load heuristic model
-    checkpoint_dir = Path(r"checkpoints\2x2-heuristic-fc\100000_examples")
+    checkpoint_dir = Path(__file__).parent.parent / "2x2-heuristic-fc" / "20260119_222859"
     checkpoint_path = checkpoint_dir / "best_model.pt"
     
     if not checkpoint_path.exists():
         checkpoint_path = sorted(checkpoint_dir.glob("checkpoint_epoch_*.pt"))[-1]
     
     if not checkpoint_path.exists():
-        print(f"⚠ Checkpoint not found in {checkpoint_dir}")
+        print(f"Checkpoint not found in {checkpoint_dir}")
         sys.exit(1)
     
     print(f"Loading heuristic model from {checkpoint_path}...\n")
     heuristic = SmallNetHeuristic(str(checkpoint_path), device=device)
     #heuristic = ZeroHeuristic()
     
-    # Generate a random scrambled cube
-    print("="*70)
-    print("GENERATING SCRAMBLED CUBE")
-    print("="*70)
-    
+    # Generate scramble
     test_cube, scramble = scramble_cube(num_moves=SCRAMBLE_LENGTH)
-    
     print(f"\nScramble ({len(scramble)} moves): {' '.join(scramble)}")
     CubeVisualizer.print_cube_state(test_cube, "Scrambled Cube State")
     
     # Solve with A*
-    print("\n" + "="*70)
-    print("SOLVING WITH A* + HEURISTIC")
-    print("="*70)
-    print(f"\nMax nodes: {MAX_NODES}")
+    print(f"\nSolving with A* (max {MAX_NODES} nodes)...")
     
     solution, metrics = astar_solve(test_cube, heuristic, max_nodes=MAX_NODES, batch_size=512)
     
     if solution is not None:
-        print(f"\n✅ Solution found in {len(solution)} moves!")
-        print(f"Solution: {' '.join(solution)}")
+        print(f"\nSolution ({len(solution)} moves): {' '.join(solution)}")
+        print(f"Stats: {metrics['nodes_expanded']} nodes, {metrics['time_seconds']:.2f}s")
         
         # Validate solution
-        print("\n" + "="*70)
-        print("VALIDATING SOLUTION")
-        print("="*70)
-        
         test_cube_copy = copy.deepcopy(test_cube)
         for move in solution:
             test_cube_copy.rotate(move)
         
         is_valid = is_solved(test_cube_copy)
-        print(f"\nValidation: {'✅ SOLUTION IS VALID' if is_valid else '❌ SOLUTION IS INVALID'}")
-        
-        print(f"\nSearch statistics:")
-        print(f"  - Solution length: {len(solution)} moves")
-        print(f"  - Nodes expanded: {metrics['nodes_expanded']}")
-        print(f"  - Heuristic calls: {metrics['heuristic_calls']}")
-        print(f"  - Solve time: {metrics['time_seconds']:.3f}s")
+        if not is_valid:
+            print("Warning: Solution does not solve the cube!")
         
         # Step-by-step visualization
-        print("\n" + "="*70)
-        print("STEP-BY-STEP SOLUTION")
-        print("="*70)
-        
+        print("\nStep-by-step solution:")
         trace = CubeVisualizer.apply_moves_trace(test_cube, solution)
         
         for i, (state, move) in enumerate(trace):
             if i == 0:
                 CubeVisualizer.print_cube_state(state, f"Step {i}: {move}")
             else:
-                CubeVisualizer.print_cube_state(state, f"Step {i}: Apply move '{move}'")
-            
-            if i < len(trace) - 1:
-                print()
-        
-        print("\n" + "="*70)
-        print("✅ CUBE SOLVED!")
-        print("="*70)
+                CubeVisualizer.print_cube_state(state, f"Step {i}: {move}")
+            print()
     
     else:
-        print(f"\n⚠ Solution not found within {MAX_NODES} nodes")
-        print(f"\nSearch statistics:")
-        print(f"  - Nodes expanded: {metrics['nodes_expanded']}")
-        print(f"  - Heuristic calls: {metrics['heuristic_calls']}")
-        print(f"  - Time: {metrics['time_seconds']:.3f}s")
+        print(f"\nNo solution found within {MAX_NODES} nodes")
+        print(f"Nodes expanded: {metrics['nodes_expanded']}, Time: {metrics['time_seconds']:.2f}s")
