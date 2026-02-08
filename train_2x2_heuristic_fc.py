@@ -1,10 +1,3 @@
-"""
-Training script for 2x2 Cube Heuristic prediction using a simple fully connected network.
-4 layers, 512 units per layer, ReLU activation.
-Uses wandb for logging metrics and gradients, and saves checkpoints.
-"""
-
-import os
 import json
 import numpy as np
 from pathlib import Path
@@ -18,23 +11,18 @@ from torch.utils.data import Dataset, DataLoader
 import wandb
 from tqdm import tqdm
 
-
-# ============================================================================
-# Configuration
-# ============================================================================
-
 class Config:
     # Data
     data_path = "data/cube-2-by-2-heuristic"
-    max_train_samples = 1000  # None = use all, or int to subsample (e.g., 10000)
-    max_val_samples = 100    # None = use all
-    max_test_samples = None   # None = use all
+    max_train_samples = 1000
+    max_val_samples = 100
+    max_test_samples = None
     
     # Model architecture
     input_size = 24 * 6  # 24 positions, one-hot encoded with 6 colors
     hidden_size = 512
     num_layers = 4
-    output_size = 1  # Regression: distance to solved
+    output_size = 1
     
     # Training
     batch_size = 256
@@ -45,9 +33,8 @@ class Config:
     # Logging and checkpoints
     project_name = "2x2-cube-heuristic-fc"
     checkpoint_dir = "checkpoints/2x2-heuristic-fc"
-    checkpoint_every = 5  # Save checkpoint every N epochs
-    log_gradients = True
-    log_gradients_freq = 100  # Log gradients every N steps
+    checkpoint_every = 5 # epochs
+    log_freq = 100  # Log every N steps
     
     # Device
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -56,13 +43,7 @@ class Config:
     seed = 42
 
 
-# ============================================================================
-# Dataset
-# ============================================================================
-
-class CubeHeuristicDataset(Dataset):
-    """Dataset for 2x2 cube heuristic prediction."""
-    
+class CubeHeuristicDataset(Dataset):    
     def __init__(self, data_path: str, split: str = "train", max_samples: int = None):
         self.data_path = Path(data_path) / split
         
@@ -70,16 +51,15 @@ class CubeHeuristicDataset(Dataset):
         self.inputs = np.load(self.data_path / "all__inputs.npy")
         self.labels = np.load(self.data_path / "all__labels.npy")
         
-        # Subsample if requested
+        # Subsample
         total_samples = len(self.inputs)
         if max_samples is not None and max_samples < total_samples:
-            # Random subsample with fixed seed for reproducibility
+            # Random samples
             rng = np.random.RandomState(42)
             indices = rng.choice(total_samples, size=max_samples, replace=False)
-            indices.sort()  # Keep order for reproducibility
             self.inputs = self.inputs[indices]
             self.labels = self.labels[indices]
-            print(f"Subsampled {split} set: {total_samples} -> {max_samples} examples")
+            print(f"Subsampled to {max_samples} examples")
         
         # Load metadata
         with open(self.data_path / "dataset.json", "r") as f:
@@ -88,13 +68,12 @@ class CubeHeuristicDataset(Dataset):
         print(f"Loaded {split} set: {len(self.inputs)} examples")
         print(f"  Input shape: {self.inputs.shape}")
         print(f"  Label shape: {self.labels.shape}")
-        print(f"  Label range: [{self.labels.min()}, {self.labels.max()}]")
     
     def __len__(self):
         return len(self.inputs)
     
     def __getitem__(self, idx):
-        # Get cube state (24 values, each 0-5)
+        # Get cube state
         state = self.inputs[idx]
         
         # One-hot encode: 24 positions x 6 colors = 144 features
@@ -103,21 +82,14 @@ class CubeHeuristicDataset(Dataset):
             one_hot[i, color] = 1.0
         one_hot = one_hot.flatten()
         
-        # Get label (distance to solved)
+        # Get label
         label = self.labels[idx].astype(np.float32)
-        if label.ndim > 0:
-            label = label[0]  # Extract scalar if needed
+        label = label[0]
         
         return torch.from_numpy(one_hot), torch.tensor(label, dtype=torch.float32)
 
 
-# ============================================================================
-# Model
-# ============================================================================
-
-class FCHeuristicNet(nn.Module):
-    """4-layer fully connected network with ReLU activations."""
-    
+class HeuristicNet(nn.Module):    
     def __init__(self, input_size: int, hidden_size: int, num_layers: int, output_size: int):
         super().__init__()
         
@@ -141,20 +113,7 @@ class FCHeuristicNet(nn.Module):
         return self.network(x).squeeze(-1)
 
 
-# ============================================================================
-# Training Functions
-# ============================================================================
-
-def set_seed(seed: int):
-    """Set random seeds for reproducibility."""
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
 def save_checkpoint(model, optimizer, epoch, step, train_loss, val_loss, path):
-    """Save model checkpoint."""
     checkpoint = {
         'epoch': epoch,
         'step': step,
@@ -168,7 +127,6 @@ def save_checkpoint(model, optimizer, epoch, step, train_loss, val_loss, path):
 
 
 def load_checkpoint(model, optimizer, path):
-    """Load model checkpoint."""
     checkpoint = torch.load(path, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -176,7 +134,6 @@ def load_checkpoint(model, optimizer, path):
 
 
 def train_epoch(model, train_loader, optimizer, criterion, device, epoch, config):
-    """Train for one epoch."""
     model.train()
     total_loss = 0.0
     total_mae = 0.0
@@ -185,7 +142,7 @@ def train_epoch(model, train_loader, optimizer, criterion, device, epoch, config
     
     pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config.epochs} [Train]")
     
-    for batch_idx, (inputs, labels) in enumerate(pbar):
+    for inputs, labels in pbar:
         inputs = inputs.to(device)
         labels = labels.to(device)
         
@@ -207,26 +164,12 @@ def train_epoch(model, train_loader, optimizer, criterion, device, epoch, config
         num_batches += 1
         global_step += 1
         
-        # Update progress bar
-        pbar.set_postfix({
-            'loss': f'{loss.item():.4f}',
-            'mae': f'{mae.item():.4f}'
-        })
-        
         # Log to wandb
         wandb.log({
             'train/batch_loss': loss.item(),
             'train/batch_mae': mae.item(),
             'train/step': global_step,
         }, step=global_step)
-        
-        # Log gradients periodically
-        if config.log_gradients and batch_idx % config.log_gradients_freq == 0:
-            grad_norms = {}
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    grad_norms[f'gradients/{name}'] = param.grad.norm().item()
-            wandb.log(grad_norms, step=global_step)
     
     avg_loss = total_loss / num_batches
     avg_mae = total_mae / num_batches
@@ -235,11 +178,10 @@ def train_epoch(model, train_loader, optimizer, criterion, device, epoch, config
 
 
 def validate(model, val_loader, criterion, device, config):
-    """Validate the model."""
     model.eval()
     total_loss = 0.0
     total_mae = 0.0
-    total_correct_floor = 0  # Predictions rounded to nearest int match label
+    total_correct = 0  # Prediction rounded to nearest int match label
     num_batches = 0
     num_samples = 0
     
@@ -257,27 +199,22 @@ def validate(model, val_loader, criterion, device, config):
             loss = criterion(outputs, labels)
             mae = torch.abs(outputs - labels).mean()
             
-            # Compute accuracy (rounded prediction matches label)
+            # Compute accuracy
             preds_rounded = torch.round(outputs)
             correct = (preds_rounded == labels).sum().item()
             
             total_loss += loss.item()
             total_mae += mae.item()
-            total_correct_floor += correct
+            total_correct += correct
             num_batches += 1
             num_samples += labels.size(0)
             
             all_preds.extend(outputs.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
-            
-            pbar.set_postfix({
-                'loss': f'{loss.item():.4f}',
-                'mae': f'{mae.item():.4f}'
-            })
     
     avg_loss = total_loss / num_batches
     avg_mae = total_mae / num_batches
-    accuracy = total_correct_floor / num_samples
+    accuracy = total_correct / num_samples
     
     # Compute additional metrics
     all_preds = np.array(all_preds)
@@ -295,11 +232,13 @@ def validate(model, val_loader, criterion, device, config):
 
 
 def main():
-    """Main training function."""
     config = Config()
     
     # Set seed
-    set_seed(config.seed)
+    torch.manual_seed(config.seed)
+    np.random.seed(config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.seed)
     
     # Create checkpoint directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -359,8 +298,7 @@ def main():
     )
     
     # Create model
-    print("\nCreating model...")
-    model = FCHeuristicNet(
+    model = HeuristicNet(
         input_size=config.input_size,
         hidden_size=config.hidden_size,
         num_layers=config.num_layers,
@@ -368,14 +306,10 @@ def main():
     )
     model = model.to(config.device)
     
-    # Print model summary
     total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
     
-    # Log model architecture to wandb
-    wandb.watch(model, log='all', log_freq=config.log_gradients_freq)
+    wandb.watch(model, log='all', log_freq=config.log_freq)
     
     # Create optimizer and loss function
     optimizer = optim.AdamW(
@@ -398,9 +332,7 @@ def main():
     global_step = 0
     
     for epoch in range(config.epochs):
-        print(f"\n{'='*60}")
         print(f"Epoch {epoch + 1}/{config.epochs}")
-        print(f"{'='*60}")
         
         # Train
         train_loss, train_mae, global_step = train_epoch(
@@ -426,12 +358,6 @@ def main():
             'val/accuracy': val_metrics['accuracy'],
             'learning_rate': current_lr,
         }, step=global_step)
-        
-        print(f"\nEpoch {epoch + 1} Summary:")
-        print(f"  Train Loss: {train_loss:.4f}, Train MAE: {train_mae:.4f}")
-        print(f"  Val Loss: {val_metrics['loss']:.4f}, Val MAE: {val_metrics['mae']:.4f}")
-        print(f"  Val RMSE: {val_metrics['rmse']:.4f}, Val Accuracy: {val_metrics['accuracy']:.4f}")
-        print(f"  Learning Rate: {current_lr:.6f}")
         
         # Save best model
         if val_metrics['loss'] < best_val_loss:
@@ -459,19 +385,9 @@ def main():
         train_loss, val_metrics['loss'], final_path
     )
     
-    # Final evaluation on test set
-    print("\n" + "="*60)
-    print("Final Evaluation on Test Set")
-    print("="*60)
-    
+    # Validate using test set
     test_metrics = validate(model, test_loader, criterion, config.device, config)
     
-    print(f"Test Loss: {test_metrics['loss']:.4f}")
-    print(f"Test MAE: {test_metrics['mae']:.4f}")
-    print(f"Test RMSE: {test_metrics['rmse']:.4f}")
-    print(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
-    
-    # Log final test metrics
     wandb.log({
         'test/loss': test_metrics['loss'],
         'test/mae': test_metrics['mae'],
@@ -479,24 +395,13 @@ def main():
         'test/accuracy': test_metrics['accuracy'],
     })
     
-    # Create a summary table of predictions vs labels
     wandb.log({
         'test/predictions_histogram': wandb.Histogram(test_metrics['predictions']),
         'test/labels_histogram': wandb.Histogram(test_metrics['labels']),
     })
     
-    # Log artifact
-    artifact = wandb.Artifact(
-        name=f"model-{run.name}",
-        type="model",
-        description="Trained 2x2 cube heuristic FC model"
-    )
-    artifact.add_dir(str(run_checkpoint_dir))
-    run.log_artifact(artifact)
-    
     wandb.finish()
     
-    print("\nTraining complete!")
     print(f"Best validation loss: {best_val_loss:.4f}")
     print(f"Checkpoints saved to: {run_checkpoint_dir}")
 

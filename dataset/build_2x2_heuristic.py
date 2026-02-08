@@ -1,13 +1,4 @@
-# load dataset (of type 2x2)
-# take the scrambled state
-# load it and follow the solution (label)
-# for each state during the solution create a pair (state, how far to solved)
-#   store these new pairs as intput (cube state string) and label (int)
-# call it 3 times for train, test, eval
-
-import os
 import json
-from typing import Optional
 from argdantic import ArgParser
 import numpy as np
 from pathlib import Path
@@ -28,7 +19,7 @@ class DataProcessConfig(BaseModel):
     test_size: int = 1000
 
 def load_dataset_split(data_dir: Path, split: str):
-    """Load a dataset split (train/test/val)"""
+    #Load a dataset split (train/test/val)
     split_dir = data_dir / split
     if not split_dir.exists():
         raise FileNotFoundError(f"Split {split} not found in {data_dir}")
@@ -56,18 +47,15 @@ def load_dataset_split(data_dir: Path, split: str):
 
 def py222_to_magiccube(state):
     color_map = {0: 'W', 1: 'R', 2: 'G', 3: 'Y', 4: 'O', 5: 'B'}
-
-    # py222 order: U(0-3), R(4-7), F(8-11), D(12-15), L(16-19), B(20-23)
-    # magiccube order: U(0-3), L(4-7), F(8-11), R(12-15), B(16-19), D(20-23)
     
-    # Reorder: take py222 indices and put them in magiccube order
+    # Reorder stickers from px222 to magiccube notation
     magic_order = (
-        list(range(0, 4)) +    # U stays at 0-3
-        list(range(16, 20)) +  # L: py222 16-19 -> magic 4-7
-        list(range(8, 12)) +   # F stays at 8-11
-        list(range(4, 8)) +    # R: py222 4-7 -> magic 12-15
-        list(range(20, 24)) +  # B stays at 16-19
-        list(range(12, 16))    # D: py222 12-15 -> magic 20-23
+        list(range(0, 4)) +
+        list(range(16, 20)) +
+        list(range(8, 12)) +
+        list(range(4, 8)) +
+        list(range(20, 24)) +
+        list(range(12, 16))
     )
     return ''.join([color_map[state[i]] for i in magic_order])
 
@@ -168,8 +156,7 @@ def create_dataset(set_name, config: DataProcessConfig):
     with open(str(save_dir / "dataset.json"), "w") as f:
         json.dump(metadata.model_dump(), f)
         
-    # Save data - convert to numpy arrays with proper shapes
-    # Labels need to be 2D: (N, 1) to match dataloader expectations
+    # Labels need to be (N, 1) to match dataloader
     results["labels"] = np.array(results["labels"]).reshape(-1, 1)
     results["inputs"] = np.array(results["inputs"])
     results["puzzle_identifiers"] = np.array(results["puzzle_identifiers"])

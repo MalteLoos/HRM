@@ -1,16 +1,3 @@
-# create dataset of rubics cubes
-# take param N for NxNxN cubes
-# do some random moves aprox. 10 ~ N using magiccube https://pypi.org/project/magiccube/
-# 'label' = solution sequence
-# 'input' = scrambled cube
-#  define vocab: pad + max(input (pieces) + output (all moves))
-#  ignorelable pad (0)
-#  sequence length
-#
-# Each token encodes piece_id, orientation
-# Position from sequence index
-
-
 import json
 import os
 import sys
@@ -27,7 +14,6 @@ import multiprocessing
 import threading
 import time
 import os
-import itertools
 
 cli = ArgParser()
 
@@ -35,7 +21,7 @@ class DataProcessConfig(BaseModel):
     output_dir: str = "data/cube-2-by-2"
 
     seed: int = 42
-    train_size: int = 1000
+    train_size: int = 100000
     test_size: int = 300
     validation_size: int = 300
     
@@ -66,23 +52,10 @@ def generate_sample(rng, min_scramble, max_scramble):
     return scrambled, solution
 
 
-# Module-level worker and initializer for ProcessPoolExecutor (must be picklable on Windows)
-def _process_worker(seed, min_scramble, max_scramble):
-    local_rng = np.random.default_rng(int(seed))
-    t0 = time.time()
-    scrambled, solution = generate_sample(local_rng, min_scramble, max_scramble)
-    t1 = time.time()
-    return scrambled, solution, t1 - t0, os.getpid()
-
-
 def _init_worker():
-    try:
-        import py222  # noqa: F401
-    except Exception:
-        pass
+    import py222
 
 
-# Module-level batched worker
 def _process_worker_batch(seed, min_scramble, max_scramble, batch, progress_queue=None):
     local_rng = np.random.default_rng(int(seed))
     items = []
@@ -90,13 +63,10 @@ def _process_worker_batch(seed, min_scramble, max_scramble, batch, progress_queu
     for _ in range(batch):
         scrambled, solution = generate_sample(local_rng, min_scramble, max_scramble)
         items.append((scrambled, solution, time.time()))
-        # report progress per sample
-        try:
-            if progress_queue is not None:
-                progress_queue.put(1)
-        except Exception:
-            pass
-    # convert sample_elapsed to durations relative to start of each sample
+
+        if progress_queue is not None:
+            progress_queue.put(1)
+
     sample_times = []
     prev = start_t
     for (_, _, t) in items:
@@ -131,17 +101,10 @@ def create_dataset(set_name, size, config: DataProcessConfig):
     example_id = 0
     
     # Parallel sample generation
-
-    # Prepare per-sample seeds to keep determinism
-    seeds = rng.integers(0, 2**32 - 1, size=size, dtype=np.uint64).tolist()
-
     max_workers = os.cpu_count() or 1
 
-    # Choose batch size so each worker handles multiple samples, reducing churn.
     batch_size = max(1, size // (max_workers * 4))
     num_jobs = (size + batch_size - 1) // batch_size
-
-    # NOTE: using module-level _process_worker_batch
 
     manager = multiprocessing.Manager()
     progress_q = manager.Queue()
@@ -201,20 +164,21 @@ def create_dataset(set_name, size, config: DataProcessConfig):
                 if completed >= size:
                     break
 
-        # optional diagnostics
         if elapsed_times:
             avg = sum(elapsed_times) / len(elapsed_times)
-            print(f"Per-sample solve time: avg={avg:.3f}s min={min(elapsed_times):.3f}s max={max(elapsed_times):.3f}s")
-            print("Per-process sample counts (pid:count):")
+            print(f"Solve time: avg={avg:.3f}s min={min(elapsed_times):.3f}s max={max(elapsed_times):.3f}s")
+            print("Sample counts (pid:count):")
             for pid, cnt in sorted(pid_counts.items(), key=lambda x: -x[1])[:10]:
                 times = pid_times.get(pid, [])
                 print(f"  {pid}:{cnt} avg={sum(times)/len(times):.3f}s")
+
         # stop reader thread
         try:
             progress_q.put(None)
         except Exception:
             pass
         reader_thread.join()
+
     # Convert to numpy arrays
     final_results = {
         "inputs": np.stack(results["inputs"]),
@@ -230,7 +194,7 @@ def create_dataset(set_name, size, config: DataProcessConfig):
     #   output: 2x2 cube has only 9 moves: U, U', U2, R, R', R2, F, F', F2
     num_moves = 9
     metadata = PuzzleDatasetMetadata(
-        seq_len=seq_length,  # must match input length (24)
+        seq_len=seq_length,  # must match input length
         vocab_size=num_moves + 1,  # equals the larger vocab + 1 for pad
         pad_id=0,
         ignore_label_id=0,

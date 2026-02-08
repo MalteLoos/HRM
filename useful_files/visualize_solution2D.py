@@ -16,7 +16,7 @@ import magiccube
 
 # Add paths
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from solver import SmallNetHeuristic, astar_solve, scramble_cube, is_solved
+from solver import SmallNetHeuristic, ZeroHeuristic, astar_solve, scramble_cube, is_solved
 
 
 class CubeVisualizer:
@@ -93,6 +93,7 @@ if __name__ == "__main__":
     
     print(f"Loading heuristic model from {checkpoint_path}...\n")
     heuristic = SmallNetHeuristic(str(checkpoint_path), device=device)
+    #heuristic = ZeroHeuristic()
     
     # Generate scramble
     test_cube, scramble = scramble_cube(num_moves=SCRAMBLE_LENGTH)
