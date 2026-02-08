@@ -81,7 +81,7 @@ if __name__ == "__main__":
     MAX_NODES = 100000
     
     # Load heuristic model
-    checkpoint_dir = Path(__file__).parent.parent / "2x2-heuristic-fc" / "20260119_222859"
+    checkpoint_dir = Path(__file__).parent.parent / "checkpoints" / "2x2-heuristic-fc" / "100000_examples"
     checkpoint_path = checkpoint_dir / "best_model.pt"
     
     if not checkpoint_path.exists():
