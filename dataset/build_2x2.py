@@ -30,18 +30,12 @@ class DataProcessConfig(BaseModel):
     train_split: float = 0.8
     test_split: float = 0.1
     val_split: float = 0.1
-    num_workers: int = 0  # 0 = auto (cpu_count - 1)
+    num_workers: int = 0
 
 
-def build_conjugation_tables():
-    """Precompute orientation permutations and move conjugation tables.
-
-    Returns:
-        ori_perms:   np.ndarray (24, 24) — sticker permutation for each orientation
-        conj_arrays: np.ndarray (24, 9)  — conjugated face move for each (orientation, solver_move)
-    """
+def build_augmentation_tables():
     base_rotations = [
-        [],       # identity  (U up)
+        [],       #           (U up)
         [18],     # x         (F up)
         [20],     # x2        (D up)
         [19],     # x'        (B up)
@@ -49,7 +43,7 @@ def build_conjugation_tables():
         [25],     # z'        (R up)
     ]
     y_rotations = [
-        [],       # identity
+        [],
         [21],     # y
         [23],     # y2
         [22],     # y'
@@ -59,14 +53,14 @@ def build_conjugation_tables():
                21: 22, 22: 21, 23: 23,
                24: 25, 25: 24}
 
-    # Fingerprint every face move (0-17) on a state with unique sticker values
+    # Precompute state remappings for each orientaion
     test_state = np.arange(24)
     face_move_fp = {}
     for m in range(18):
         face_move_fp[tuple(py222.doMove(test_state, m).tolist())] = m
 
     ori_perms = np.zeros((24, 24), dtype=np.int32)
-    conj_arrays = np.zeros((24, 9), dtype=np.int32)
+    remap_arrays = np.zeros((24, 9), dtype=np.int32)
 
     idx = 0
     for base in base_rotations:
@@ -80,7 +74,7 @@ def build_conjugation_tables():
                 perm = perm[py222.moveDefs[m]]
             ori_perms[idx] = perm
 
-            # Precompute move conjugation R ∘ m ∘ R⁻¹
+            # Precompute move remppings
             for solver_move in range(9):
                 s = test_state.copy()
                 for rm in inv_rot:
@@ -88,31 +82,24 @@ def build_conjugation_tables():
                 s = py222.doMove(s, solver_move)
                 for rm in rot:
                     s = py222.doMove(s, rm)
-                conj_arrays[idx, solver_move] = face_move_fp[tuple(s.tolist())]
+                remap_arrays[idx, solver_move] = face_move_fp[tuple(s.tolist())]
 
             idx += 1
 
-    return ori_perms, conj_arrays
-
-
-def _solve_single(s):
-    """Solve a single cube state (top-level function for multiprocessing)."""
-    return solveCube(s)
+    return ori_perms, remap_arrays
 
 
 def generate_dataset(config: DataProcessConfig):
     np.random.seed(config.seed)
 
-    # Precompute orientation permutations and conjugation tables
-    ori_perms, conj_arrays = build_conjugation_tables()
+    # precompute tables for augmentation
+    ori_perms, remap_arrays = build_augmentation_tables()
 
-    # ── Phase 1: Generate unique scrambled states ──
+    # generate unique scrambled states
     scrambles = []
-    seen_base = set()
-    attempts = 0
-    pbar = tqdm(total=config.num_scrambles, desc="Phase 1: Generating scrambles")
+    seen_base = set() # only unique states
+    pbar = tqdm(total=config.num_scrambles, desc="Generating scrambles")
     while len(scrambles) < config.num_scrambles:
-        attempts += 1
         s = py222.scramble(config.scramble_length)
         s_norm = py222.normFC(s)
         key = tuple(s_norm.tolist())
@@ -122,16 +109,15 @@ def generate_dataset(config: DataProcessConfig):
             pbar.update(1)
     pbar.close()
 
-    # ── Phase 2: Solve all base states in parallel ──
+    # Solve all base states in parallel
     num_workers = config.num_workers if config.num_workers > 0 else max(1, cpu_count() - 1)
     chunk = max(1, len(scrambles) // (num_workers * 4))
-    print(f"Solving {len(scrambles)} states with {num_workers} workers...")
     with Pool(num_workers) as pool:
         all_base_solutions = list(tqdm(
-            pool.imap(_solve_single, scrambles, chunksize=chunk),
-            total=len(scrambles), desc="Phase 2: Solving"))
+            pool.imap(solveCube, scrambles, chunksize=chunk),
+            total=len(scrambles), desc="Solving"))
 
-    # ── Phase 3: Build orientations via conjugation ──
+    #Build orientations using remapping table
     inputs = []
     labels = []
     puzzle_indices = [0]
@@ -142,7 +128,7 @@ def generate_dataset(config: DataProcessConfig):
     puzzle_count = 0
     group_id = 0
 
-    for i in tqdm(range(len(scrambles)), desc="Phase 3: Orientations"):
+    for i in tqdm(range(len(scrambles)), desc="Orientations"):
         s = scrambles[i]
         base_solutions = all_base_solutions[i]
         if not base_solutions:
@@ -150,7 +136,7 @@ def generate_dataset(config: DataProcessConfig):
 
         group_puzzle_count = 0
         for ori_idx in range(24):
-            # Fast orientation via precomputed permutation (single numpy index)
+            # Orientation with precomputed tables
             oriented_s = s[ori_perms[ori_idx]]
             s_norm = py222.normFC(oriented_s)
             state_key = tuple(s_norm.tolist())
@@ -159,10 +145,10 @@ def generate_dataset(config: DataProcessConfig):
                 continue
             seen_states.add(state_key)
 
-            # Transform base solutions via conjugation (no re-solving)
-            conj = conj_arrays[ori_idx]
+            # Transform base solutions
+            moves = remap_arrays[ori_idx]
             transformed_solutions = [
-                [int(conj[m]) for m in sol] for sol in base_solutions
+                [int(moves[m]) for m in sol] for sol in base_solutions
             ]
 
             state_encoded = s_norm + 1  # values 1-6
@@ -179,13 +165,11 @@ def generate_dataset(config: DataProcessConfig):
             group_id += 1
 
     total_solutions = sum(len(sols) for sols in labels)
-    print(f"Generated {group_id} groups with {puzzle_count} unique states")
-    print(f"Total solutions across all states: {total_solutions}")
-    print(f"Average orientations per group: {puzzle_count / group_id:.2f}")
+    print(f"Generated {group_id} cubes augmented to {puzzle_count} cubes")
+    print(f"Total solutions: {total_solutions}")
     print(f"Average solutions per state: {total_solutions / puzzle_count:.2f}")
-    print(f"Attempts needed: {attempts}")
 
-    # Convert labels to padded 3D numpy array: (num_puzzles, max_solutions, seq_len)
+    # Pad solutions
     seq_len = 11
     max_solutions = max(len(sols) for sols in labels)
 
@@ -237,7 +221,7 @@ def generate_dataset(config: DataProcessConfig):
         labels_split = labels_padded[split_row_indices]
         identifiers_split = identifiers_arr[split_row_indices]
 
-        # Rebuild group and puzzle indices for this split (re-indexed from 0)
+        # regroup for test and val set
         new_puzzle_indices = [0]
         new_group_indices = [0]
         puzzle_counter = 0
@@ -263,7 +247,7 @@ def generate_dataset(config: DataProcessConfig):
         # Metadata for this split
         metadata = PuzzleDatasetMetadata(
             seq_len=seq_len,
-            vocab_size=19,  # PAD(0) + 9 moves
+            vocab_size=19,  # PAD(0) + 18 moves (because of the augmentation)
 
             pad_id=0,
             ignore_label_id=0,
@@ -285,15 +269,6 @@ def generate_dataset(config: DataProcessConfig):
 
         for k, v in results_split.items():
             np.save(os.path.join(save_dir, f"{split_name}__{k}.npy"), v)
-
-        print(f"\n{split_name.upper()} split saved:")
-        print(f"  examples:  {len(split_row_indices)}")
-        print(f"  inputs:    {results_split['inputs'].shape}")
-        print(f"  labels:    {results_split['labels'].shape}")
-        print(f"  groups:    {num_groups}")
-
-    print(f"\nAll splits saved to {config.output_dir}")
-    print(f"  max solutions per state: {max_solutions}")
 
 
 @cli.command(singleton=True)
