@@ -15,36 +15,7 @@ import magiccube
 from tqdm import tqdm
 
 from utils.functions import load_model_class
-
-
-# ============================================================================
-# Simple FC Model for Heuristic
-# ============================================================================
-
-class FCHeuristicNet(nn.Module):
-    """4-layer fully connected network with ReLU activations."""
-    
-    def __init__(self, input_size: int = 144, hidden_size: int = 512, num_layers: int = 4, output_size: int = 1):
-        super().__init__()
-        
-        layers = []
-        
-        # Input layer
-        layers.append(nn.Linear(input_size, hidden_size))
-        layers.append(nn.ReLU())
-        
-        # Hidden layers
-        for _ in range(num_layers - 2):
-            layers.append(nn.Linear(hidden_size, hidden_size))
-            layers.append(nn.ReLU())
-        
-        # Output layer
-        layers.append(nn.Linear(hidden_size, output_size))
-        
-        self.network = nn.Sequential(*layers)
-    
-    def forward(self, x):
-        return self.network(x).squeeze(-1)
+from train_2x2_heuristic_fc import HeuristicNet
 
 
 # 2x2 cube moves
@@ -179,7 +150,7 @@ class SmallNetHeuristic:
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         
         # Load model
-        self.model = FCHeuristicNet(
+        self.model = HeuristicNet(
             input_size=24 * 6,  # 24 positions, one-hot with 6 colors
             hidden_size=512,
             num_layers=4,
